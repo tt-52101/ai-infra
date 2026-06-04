@@ -10,7 +10,9 @@ COMPOSE_PREFILL = ROOT / "compose" / "docker-compose.prefill.yml"
 COMPOSE_DECODE = ROOT / "compose" / "docker-compose.decode.yml"
 COMPOSE_GATEWAY = ROOT / "compose" / "docker-compose.gateway.yml"
 LMCACHE_CONFIG = ROOT / "compose" / "lmcache_config.yaml"
+GATEWAY_DOCKERFILE = ROOT / "backend" / "Dockerfile"
 GATEWAY = ROOT / "backend" / "gateway.py"
+GATEWAY_REQUIREMENTS = ROOT / "backend" / "requirements.txt"
 DESIGN_DOC = ROOT / "docs" / "mvp-pd-separation-design.md"
 OPS_RUNBOOK = ROOT / "docs" / "ops-runbook.md"
 AUDIT_RESPONSE = ROOT / "docs" / "audits" / "AUDIT_RESPONSE.md"
@@ -49,7 +51,7 @@ class MvpPdAssetsTest(unittest.TestCase):
             self.assertTrue(path.exists(), f"{path.name} should exist")
 
         base = read(COMPOSE)
-        self.assertIn("ds-pd-network:", base)
+        self.assertIn("name: deepseek-pd-mvp", base)
         self.assertNotIn("lmcache-server:", base)
         self.assertNotIn("vllm-prefill:", base)
         self.assertNotIn("vllm-decode:", base)
@@ -81,14 +83,18 @@ class MvpPdAssetsTest(unittest.TestCase):
         self.assertIn("CUDA_VISIBLE_DEVICES=0,1,2,3", prefill)
         self.assertIn("device_ids: ['0', '1', '2', '3']", prefill)
         self.assertIn("--tensor-parallel-size 4", prefill)
+        self.assertIn("--host 127.0.0.1", prefill)
         self.assertIn("--port 8001", prefill)
 
         self.assertIn("CUDA_VISIBLE_DEVICES=0,1,2,3", decode)
         self.assertIn("device_ids: ['4', '5', '6', '7']", decode)
         self.assertIn("--tensor-parallel-size 4", decode)
+        self.assertIn("--host 127.0.0.1", decode)
         self.assertIn("--port 8002", decode)
 
         for block in (prefill, decode):
+            self.assertIn("network_mode: host", block)
+            self.assertIn("ipc: host", block)
             self.assertIn("NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}", block)
             self.assertIn("NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-1}", block)
             self.assertIn("NCCL_SHM_DISABLE=${NCCL_SHM_DISABLE:-0}", block)
@@ -101,9 +107,10 @@ class MvpPdAssetsTest(unittest.TestCase):
 
         self.assertIn("--enable-chunked-prefill", prefill)
 
-        self.assertIn('"8000:8000"', gateway)
-        self.assertIn("PREFILL_NODE_URL=http://vllm-prefill:8001/v1/chat/completions", gateway)
-        self.assertIn("DECODE_NODE_URL=http://vllm-decode:8002/v1/chat/completions", gateway)
+        self.assertIn("network_mode: host", gateway)
+        self.assertNotIn("ports:", gateway)
+        self.assertIn("PREFILL_NODE_URL=http://127.0.0.1:8001/v1/chat/completions", gateway)
+        self.assertIn("DECODE_NODE_URL=http://127.0.0.1:8002/v1/chat/completions", gateway)
 
     def test_audit_security_hardening_contract(self) -> None:
         compose = compose_text()
@@ -115,14 +122,18 @@ class MvpPdAssetsTest(unittest.TestCase):
         self.assertIn('max-size: "50m"', compose)
         self.assertIn('max-file: "5"', compose)
 
+        self.assertIn("network_mode: host", lmcache)
+        self.assertIn("ipc: host", lmcache)
         self.assertNotIn("ports:", lmcache)
-        self.assertIn("expose:", lmcache)
+        self.assertNotIn("expose:", lmcache)
         self.assertIn("${LMCACHE_MP_PORT:-6555}", lmcache)
         self.assertIn("${LMCACHE_HTTP_PORT:-8080}", lmcache)
         self.assertIn("${LMCACHE_IMAGE:-lmcache/standalone:nightly}", lmcache)
         self.assertNotIn("lmcache/lmcache-server", lmcache)
         self.assertIn("/opt/venv/bin/lmcache", lmcache)
         self.assertIn("server", lmcache)
+        self.assertIn("--http-host", lmcache)
+        self.assertIn("127.0.0.1", lmcache)
         self.assertIn("--l1-size-gb", lmcache)
         self.assertIn("${LMCACHE_L1_SIZE_GB:-60}", lmcache)
         self.assertIn("--eviction-policy", lmcache)
@@ -132,7 +143,7 @@ class MvpPdAssetsTest(unittest.TestCase):
 
         for block in (prefill, decode):
             self.assertNotIn("ports:", block)
-            self.assertIn("expose:", block)
+            self.assertNotIn("expose:", block)
             self.assertIn("${VLLM_IMAGE:-lmcache/vllm-openai:latest-nightly}", block)
             self.assertIn("--api-key", block)
             self.assertIn("${VLLM_API_KEY:-sk-mvp-change-me}", block)
@@ -140,12 +151,12 @@ class MvpPdAssetsTest(unittest.TestCase):
             self.assertIn("--kv-transfer-config", block)
             self.assertIn("LMCacheMPConnector", block)
             self.assertIn("lmcache.integration.vllm.lmcache_mp_connector", block)
-            self.assertIn('"lmcache.mp.host":"tcp://lmcache-server"', block)
+            self.assertNotIn("lmcache.mp.host", block)
             self.assertIn('"lmcache.mp.port":${LMCACHE_MP_PORT:-6555}', block)
             self.assertIn("logging:", block)
             self.assertIn('max-size: "50m"', block)
 
-        self.assertIn('"8000:8000"', gateway)
+        self.assertNotIn("ports:", gateway)
         self.assertIn("UPSTREAM_API_KEY=${VLLM_API_KEY:-sk-mvp-change-me}", gateway)
         self.assertIn("GATEWAY_API_KEY=${GATEWAY_API_KEY:-sk-mvp-change-me}", gateway)
         self.assertIn("healthcheck:", gateway)
@@ -193,6 +204,33 @@ class MvpPdAssetsTest(unittest.TestCase):
         self.assertIn("x-prefill-ms", gateway)
         self.assertIn("StreamingResponse", gateway)
         self.assertIn("JSONResponse", gateway)
+
+    def test_gateway_image_build_supports_restricted_networks(self) -> None:
+        dockerfile = read(GATEWAY_DOCKERFILE)
+        gateway_compose = service_block(compose_text(), "gateway")
+        requirements = read(GATEWAY_REQUIREMENTS)
+
+        self.assertIn("fastapi>=0.110,<1", requirements)
+        self.assertIn("httpx>=0.27,<1", requirements)
+        self.assertIn("uvicorn[standard]>=0.27,<1", requirements)
+
+        self.assertIn("ARG PIP_INDEX_URL", dockerfile)
+        self.assertIn("ARG PIP_EXTRA_INDEX_URL", dockerfile)
+        self.assertIn("ARG PIP_TRUSTED_HOST", dockerfile)
+        self.assertIn("ARG PIP_DEFAULT_TIMEOUT", dockerfile)
+        self.assertIn("ARG PIP_RETRIES", dockerfile)
+        self.assertIn("--index-url", dockerfile)
+        self.assertIn("--extra-index-url", dockerfile)
+        self.assertIn("--trusted-host", dockerfile)
+        self.assertIn("--timeout", dockerfile)
+        self.assertIn("--retries", dockerfile)
+        self.assertIn("python -m pip install", dockerfile)
+
+        self.assertIn("PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}", gateway_compose)
+        self.assertIn("PIP_EXTRA_INDEX_URL: ${PIP_EXTRA_INDEX_URL:-}", gateway_compose)
+        self.assertIn("PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}", gateway_compose)
+        self.assertIn("PIP_DEFAULT_TIMEOUT: ${PIP_DEFAULT_TIMEOUT:-120}", gateway_compose)
+        self.assertIn("PIP_RETRIES: ${PIP_RETRIES:-10}", gateway_compose)
 
     def test_final_design_doc_exists_and_states_mvp_contract(self) -> None:
         doc = read(DESIGN_DOC)

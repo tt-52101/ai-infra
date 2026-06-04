@@ -19,8 +19,8 @@
 
 | 审计问题 | 响应 | 当前处理 |
 | --- | --- | --- |
-| LMCache 端口对外暴露 | 采纳 | `lmcache-server` 从 `ports` 改为 `expose`，仅容器内网络可访问 |
-| vLLM 8001/8002 对外暴露 | 采纳 | `vllm-prefill` 和 `vllm-decode` 从 `ports` 改为 `expose`，外部只访问 gateway 的 `8000` |
+| LMCache 端口对外暴露 | 采纳 | 按官方 Docker 示例采用 `network_mode: host`，但 LMCache MP 与 HTTP 管理面只绑定 loopback，不作为外部入口 |
+| vLLM 8001/8002 对外暴露 | 采纳 | vLLM Prefill/Decode 使用 host 网络并显式 `--host 127.0.0.1`，外部只访问 gateway 的 `8000` |
 | vLLM API 无认证 | 采纳 | Prefill/Decode 增加 `--api-key ${VLLM_API_KEY:-sk-mvp-change-me}` |
 | Gateway 到 vLLM 无认证传递 | 采纳 | gateway 新增 `UPSTREAM_API_KEY`，向内部 vLLM 注入 Bearer token |
 | Gateway 外部入口无认证 | 采纳 | gateway 新增 `GATEWAY_API_KEY`，保护 `/v1/chat/completions` |
@@ -85,9 +85,9 @@ flowchart LR
 | 服务 | 宿主机暴露 | 容器网络暴露 |
 | --- | --- | --- |
 | `gateway` | `8000` | `8000` |
-| `vllm-prefill` | 不暴露 | `8001` |
-| `vllm-decode` | 不暴露 | `8002` |
-| `lmcache-server` | 不暴露 | `6555`, `8080` |
+| `vllm-prefill` | loopback | `8001` |
+| `vllm-decode` | loopback | `8002` |
+| `lmcache-server` | loopback | `6555`, `8080` |
 
 ## 6. 优化路线
 
@@ -146,6 +146,6 @@ flowchart LR
 
 参考依据：
 
-- [vLLM Disaggregated Prefilling](https://docs.vllm.ai/en/v0.17.0/features/disagg_prefill/)
+- [vLLM Disaggregated Prefilling](https://docs.vllm.ai/en/stable/features/disagg_prefill.html)
 - [LMCache Integration](https://docs.lmcache.ai/developer_guide/integration.html)
 - [LMCache Multiprocessing Configuration](https://docs.lmcache.ai/mp/configuration.html)

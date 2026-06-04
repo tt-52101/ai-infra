@@ -27,8 +27,10 @@ MVP 的验证目标不是证明 8 张 RTX 4090 可以稳定承载 DeepSeek-V3/R1
 
 参考链接：
 
-- [vLLM Disaggregated Prefilling](https://docs.vllm.ai/en/v0.17.0/features/disagg_prefill/)
+- [vLLM Disaggregated Prefilling](https://docs.vllm.ai/en/stable/features/disagg_prefill.html)
 - [LMCache Integration](https://docs.lmcache.ai/developer_guide/integration.html)
+- [LMCache MP Deployment Guide](https://docs.lmcache.ai/mp/deployment.html)
+- [Docker Compose GPU Support](https://docs.docker.com/compose/how-tos/gpu-support/)
 - [vLLM production-stack Disaggregated Prefill](https://github.com/vllm-project/production-stack/blob/main/docs/source/use_cases/disaggregated-prefill.rst)
 
 ## 3. 设计目标
@@ -92,9 +94,9 @@ flowchart LR
 ## 5. 请求链路
 
 1. 客户端带 `Authorization: Bearer ${GATEWAY_API_KEY}` 请求 `POST /v1/chat/completions` 到 `gateway:8000`。
-2. Gateway 复制原始请求，改写为 `max_tokens=1`、`stream=false`，发送给 `vllm-prefill:8001`。
+2. Gateway 复制原始请求，改写为 `max_tokens=1`、`stream=false`，发送给 `127.0.0.1:8001`。
 3. Prefill 节点完成长上下文计算，LMCache 根据配置捕获并共享 KV Cache。
-4. Gateway 将原始请求发送给 `vllm-decode:8002`。
+4. Gateway 将原始请求发送给 `127.0.0.1:8002`。
 5. Decode 节点通过 LMCache 复用相同长前缀 KV Cache，并把结果返回给客户端。
 6. Gateway 在响应头中返回 Prefill 观测信息：
 
@@ -113,7 +115,7 @@ Compose 已按能力拆分，避免一个大文件同时承载缓存、推理和
 
 | 文件 | 职责 |
 | --- | --- |
-| `compose/docker-compose.yml` | 基础网络定义，不放具体服务 |
+| `compose/docker-compose.yml` | Compose 项目名定义，不放具体服务 |
 | `compose/docker-compose.lmcache.yml` | `lmcache-server` KV Cache 服务 |
 | `compose/docker-compose.prefill.yml` | `vllm-prefill` Prefill 生产者节点 |
 | `compose/docker-compose.decode.yml` | `vllm-decode` Decode 消费者节点 |
@@ -121,10 +123,13 @@ Compose 已按能力拆分，避免一个大文件同时承载缓存、推理和
 
 推荐通过 `ops/pd-stack.sh` 或 `ops/pd-stack.ps1` 组合这些文件，不建议运维人员手写多段 `docker compose -f ...` 命令。
 
+当前 Compose 采用 LMCache 官方 Docker 示例的 host 网络等价写法：LMCache、Prefill、Decode 和 Gateway 均使用 `network_mode: host`。vLLM Prefill/Decode 显式绑定 `127.0.0.1`，LMCache HTTP 管理面显式绑定 `127.0.0.1`，避免内部服务通过宿主机公网地址暴露；Gateway 仍作为唯一外部业务入口监听 `8000`。
+
 关键参数：
 
 ```yaml
 vllm-prefill:
+  network_mode: host
   environment:
     - CUDA_VISIBLE_DEVICES=0,1,2,3
     - NCCL_P2P_DISABLE=1
@@ -135,10 +140,12 @@ vllm-prefill:
     --enable-prefix-caching
     --enable-chunked-prefill
     --api-key ${VLLM_API_KEY:-sk-mvp-change-me}
-    --kv-transfer-config '{"kv_connector":"LMCacheMPConnector","kv_role":"kv_producer",...}'
+    --kv-transfer-config '{"kv_connector":"LMCacheMPConnector","kv_role":"kv_producer","kv_connector_extra_config":{"lmcache.mp.port":6555}}'
+    --host 127.0.0.1
     --port 8001
 
 vllm-decode:
+  network_mode: host
   environment:
     - CUDA_VISIBLE_DEVICES=0,1,2,3
     - NCCL_P2P_DISABLE=1
@@ -148,7 +155,8 @@ vllm-decode:
     --tensor-parallel-size 4
     --enable-prefix-caching
     --api-key ${VLLM_API_KEY:-sk-mvp-change-me}
-    --kv-transfer-config '{"kv_connector":"LMCacheMPConnector","kv_role":"kv_consumer",...}'
+    --kv-transfer-config '{"kv_connector":"LMCacheMPConnector","kv_role":"kv_consumer","kv_connector_extra_config":{"lmcache.mp.port":6555}}'
+    --host 127.0.0.1
     --port 8002
 ```
 
@@ -178,8 +186,8 @@ Gateway 代码位于 `backend/gateway.py`，镜像资产为：
 容器内默认路由：
 
 ```text
-PREFILL_NODE_URL=http://vllm-prefill:8001/v1/chat/completions
-DECODE_NODE_URL=http://vllm-decode:8002/v1/chat/completions
+PREFILL_NODE_URL=http://127.0.0.1:8001/v1/chat/completions
+DECODE_NODE_URL=http://127.0.0.1:8002/v1/chat/completions
 UPSTREAM_API_KEY=${VLLM_API_KEY:-sk-mvp-change-me}
 GATEWAY_API_KEY=${GATEWAY_API_KEY:-sk-mvp-change-me}
 ```
@@ -302,7 +310,7 @@ PowerShell 环境可使用：
 | NCCL 稳定性 | 无 NCCL P2P 或 IB 相关卡死 |
 | Gateway 健康检查 | `GET /healthz` 返回 `status=ok` |
 | Gateway 认证 | 无 Bearer token 的推理请求返回 401 |
-| 端口暴露面 | 宿主机只暴露 gateway `8000`，不暴露 `8001`、`8002`、`6555` |
+| 端口暴露面 | Gateway 监听 `8000`；Prefill `8001`、Decode `8002`、LMCache `6555` 绑定 loopback，不作为外部业务入口 |
 | OpenAI 兼容 | `POST /v1/chat/completions` 能返回流式结果 |
 | Prefill 观测 | 响应头包含 `x-prefill-status` 和 `x-prefill-ms` |
 | Cache 复用 | 重复长前缀请求 TTFT 低于冷请求 |

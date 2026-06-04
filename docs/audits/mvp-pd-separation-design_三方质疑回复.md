@@ -30,7 +30,7 @@
 
 评审样例把 `lmcache-server` 暴露为宿主机端口 `65432:65432`。这个写法便于调试，但与前序安全审计结论冲突。
 
-当前不采纳该写法。LMCache 端口只在 Docker 内部网络 `expose`，外部唯一入口仍是 gateway `8000`。原因：
+当前不采纳该写法。Compose 已按 LMCache 官方 Docker 示例采用 `network_mode: host`，但 LMCache MP 与 HTTP 管理面绑定 loopback，外部唯一业务入口仍是 gateway `8000`。原因：
 
 - LMCache 端口不是业务 API，不应暴露给外部客户端。
 - KV Cache 可能承载 prompt 上下文派生数据，应减少未授权访问面。
@@ -38,7 +38,7 @@
 
 ### 3.2 不把 `remote_url: "lmcache://lmcache-server:65432"` 写回当前配置
 
-当前实现采用 `LMCacheMPConnector` 和 `--kv-transfer-config`。在这个方案下，vLLM 通过 connector extra config 指向 `tcp://lmcache-server:${LMCACHE_MP_PORT:-6555}`，而不是通过旧式 `remote_url` 字段表达远程缓存。
+当前实现采用 `LMCacheMPConnector` 和 `--kv-transfer-config`。在这个方案下，vLLM 通过 connector extra config 指定 `lmcache.mp.port=${LMCACHE_MP_PORT:-6555}`，依赖官方 Docker 示例的 host 网络模型访问本机 LMCache Standalone，而不是通过旧式 `remote_url` 字段表达远程缓存。
 
 因此不采纳评审样例中的 `remote_url` 配置，避免同一个 MVP 同时存在两套 LMCache 接入模型。
 
@@ -111,18 +111,18 @@ Prefill 节点增加：
 3. `vllm-prefill` 只绑定宿主机 GPU 0-3。
 4. `vllm-decode` 只绑定宿主机 GPU 4-7，但容器内 CUDA 编号为 0-3。
 5. 无认证访问 gateway 推理接口返回 401。
-6. 宿主机不能直接访问 `8001`、`8002`、`6555`。
+6. `8001`、`8002`、`6555` 只绑定 loopback，不作为外部业务入口。
 7. 长上下文重复请求 TTFT 有下降。
 8. Prefill 高负载期间 Decode 流式输出没有明显长停顿。
 
 ## 6. 当前结论
 
-本次质疑中最重要的启动风险和 NCCL 风险已经采纳并反映到实现中。当前方案仍坚持“安全收敛的 MVP 验证基线”：只暴露 gateway，内部节点通过 Docker 网络通信，PD 角色通过 `LMCacheMPConnector` 和 `--kv-transfer-config` 声明。
+本次质疑中最重要的启动风险和 NCCL 风险已经采纳并反映到实现中。当前方案仍坚持“安全收敛的 MVP 验证基线”：只暴露 gateway，内部节点通过 host 网络的 loopback 地址通信，PD 角色通过 `LMCacheMPConnector` 和 `--kv-transfer-config` 声明。
 
 生产化前仍必须完成目标机实测，并基于实际可用的 vLLM / LMCache 镜像版本固定 tag 或 digest。
 
 参考依据：
 
 - [NVIDIA Container Toolkit Docker Specialized Configurations](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/docker-specialized.html)
-- [vLLM Disaggregated Prefilling](https://docs.vllm.ai/en/v0.17.0/features/disagg_prefill/)
+- [vLLM Disaggregated Prefilling](https://docs.vllm.ai/en/stable/features/disagg_prefill.html)
 - [LMCache Multiprocessing Configuration](https://docs.lmcache.ai/mp/configuration.html)

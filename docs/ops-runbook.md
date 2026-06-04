@@ -37,6 +37,18 @@ VLLM_API_KEY=sk-change-123
 GATEWAY_API_KEY=sk-change-123
 ```
 
+当前 Compose 按 LMCache 官方 Docker 示例使用 host 网络等价部署。Prefill、Decode 和 LMCache 只绑定 `127.0.0.1` 上的内部端口，Gateway 是唯一对外业务入口。
+
+如果目标机访问 `pypi.org` 超时，配置 Gateway 镜像构建使用可访问的 PyPI 镜像源：
+
+```bash
+PIP_INDEX_URL=https://pypi.org/simple
+PIP_DEFAULT_TIMEOUT=120
+PIP_RETRIES=10
+```
+
+内网或受限网络环境可把 `PIP_INDEX_URL` 改成公司镜像源；如镜像源使用 HTTP 或私有证书，再按需设置 `PIP_TRUSTED_HOST`。
+
 ## 3. 常用命令
 
 Linux:
@@ -108,7 +120,9 @@ bash ops/pd-stack.sh verify
 | --- | --- |
 | `vllm-prefill` 启动失败 | `MODEL_PATH`、GPU 0-3 可见性、模型是否支持 TP=4 |
 | `vllm-decode` 启动失败 | GPU 4-7 物理绑定、容器内 CUDA 编号是否为 0-3 |
+| 宿主机外部能访问 `8001` / `8002` / `6555` | 检查 vLLM 是否仍有 `--host 127.0.0.1`，LMCache 是否仍有 `--http-host 127.0.0.1` |
 | `lmcache/lmcache-server` 拉取失败 | 当前不再使用该历史仓库镜像，确认 `LMCACHE_IMAGE=lmcache/standalone:nightly` 或目标机验证过的 standalone tag |
+| Gateway 镜像构建时 pip 访问 PyPI 超时 | 在 `compose/.env` 配置 `PIP_INDEX_URL`、`PIP_DEFAULT_TIMEOUT`、`PIP_RETRIES` 后重新执行 `bash ops/pd-stack.sh build gateway` |
 | gateway 返回 401 | `GATEWAY_API_KEY` 是否与请求 Bearer token 一致 |
 | gateway 返回 prefill failed | `vllm-prefill` 日志、LMCache 健康检查、`UPSTREAM_API_KEY` |
 | TTFT 没有下降 | LMCache 日志、长前缀是否完全一致、KV connector 版本兼容性 |

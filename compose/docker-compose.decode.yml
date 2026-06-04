@@ -3,8 +3,7 @@ services:
   vllm-decode:
     image: ${VLLM_IMAGE:-lmcache/vllm-openai:latest-nightly}
     container_name: vllm-decode-cluster
-    expose:
-      - "8002"
+    network_mode: host
     environment:
       - CUDA_VISIBLE_DEVICES=0,1,2,3
       - NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
@@ -40,7 +39,8 @@ services:
       --scheduler-delay-factor ${DECODE_SCHEDULER_DELAY_FACTOR:-0.0}
       --enable-prefix-caching
       --api-key ${VLLM_API_KEY:-sk-mvp-change-me}
-      --kv-transfer-config '{"kv_connector":"LMCacheMPConnector","kv_connector_module_path":"lmcache.integration.vllm.lmcache_mp_connector","kv_role":"kv_consumer","kv_connector_extra_config":{"lmcache.mp.host":"tcp://lmcache-server","lmcache.mp.port":${LMCACHE_MP_PORT:-6555}}}'
+      --kv-transfer-config '{"kv_connector":"LMCacheMPConnector","kv_connector_module_path":"lmcache.integration.vllm.lmcache_mp_connector","kv_role":"kv_consumer","kv_connector_extra_config":{"lmcache.mp.port":${LMCACHE_MP_PORT:-6555}}}'
+      --host 127.0.0.1
       --port 8002
     depends_on:
       lmcache-server:
@@ -60,5 +60,3 @@ services:
       options:
         max-size: "50m"
         max-file: "5"
-    networks:
-      - ds-pd-network

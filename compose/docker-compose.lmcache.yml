@@ -3,9 +3,7 @@ services:
   lmcache-server:
     image: ${LMCACHE_IMAGE:-lmcache/standalone:nightly}
     container_name: lmcache-server
-    expose:
-      - "${LMCACHE_MP_PORT:-6555}"
-      - "${LMCACHE_HTTP_PORT:-8080}"
+    network_mode: host
     environment:
       - LMCACHE_LOG_LEVEL=${LMCACHE_LOG_LEVEL:-INFO}
     ipc: host
@@ -19,12 +17,10 @@ services:
     command:
       - /opt/venv/bin/lmcache
       - server
-      - --host
-      - 0.0.0.0
       - --port
       - "${LMCACHE_MP_PORT:-6555}"
       - --http-host
-      - 0.0.0.0
+      - 127.0.0.1
       - --http-port
       - "${LMCACHE_HTTP_PORT:-8080}"
       - --l1-size-gb
@@ -47,5 +43,3 @@ services:
       options:
         max-size: "50m"
         max-file: "5"
-    networks:
-      - ds-pd-network

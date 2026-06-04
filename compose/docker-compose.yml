@@ -7,6 +7,4 @@
 #
 # Use ../ops/pd-stack.sh or ../ops/pd-stack.ps1 to combine files safely.
 
-networks:
-  ds-pd-network:
-    driver: bridge
+name: deepseek-pd-mvp
