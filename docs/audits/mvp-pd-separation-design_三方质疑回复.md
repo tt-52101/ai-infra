@@ -44,14 +44,14 @@
 
 ### 3.3 不直接固定到评审样例中的镜像版本
 
-评审早期建议过 `lmcache/lmcache-server` 方向，但目标环境已经验证 Docker Hub 不存在该镜像发布。当前实现改为 `lmcache/standalone`，vLLM 侧使用 `lmcache/vllm-openai`，固定版本方向仍然正确，但具体 tag 或 digest 必须在目标 GPU 服务器上验证：
+评审早期建议过 `lmcache/lmcache-server` 方向，但目标环境已经验证 Docker Hub 不存在该镜像发布。当前实现改为 `lmcache/standalone`，vLLM 侧使用 `lmcache/vllm-openai`。MVP 默认值已经固定为 `lmcache/standalone:v0.4.5-cu129` 与 `lmcache/vllm-openai:v0.4.5-cu129`，不再使用 nightly；生产化时仍必须在目标 GPU 服务器上验证并固定 digest：
 
 - 是否包含 `LMCacheMPConnector`。
 - 是否支持当前 `--kv-transfer-config` 字段。
 - 是否支持目标 DeepSeek AWQ 权重。
 - 是否与当前 LMCache 配置兼容。
 
-所以当前仍保留 `.env` 参数化镜像，目标机验证成功后再把 tag 或 digest 固化。
+所以当前保留 `.env` 参数化镜像能力，但默认值使用固定 tag；目标机验证成功后再把 digest 固化。
 
 ## 4. 已完成的实现调整
 
@@ -102,6 +102,24 @@ Prefill 节点增加：
 
 该参数用于降低长上下文 Prefill 峰值压力。Decode 节点不强制开启该参数，避免把 Decode 侧目标从低延迟流式输出变成长上下文吞吐处理。
 
+### 4.4 vLLM 启动参数与 4090 NCCL 加固
+
+针对目标机日志中出现的 nightly 镜像兼容风险、`--model` 参数弃用提示、NCCL worker 初始化失败和 `free(): double free detected`，Prefill/Decode 已同步调整：
+
+```text
+/model
+--disable-custom-all-reduce
+```
+
+同时保留：
+
+```yaml
+environment:
+  - NCCL_DEBUG=${NCCL_DEBUG:-WARN}
+```
+
+含义是：模型路径使用 vLLM 当前 CLI 推荐的位置参数形式；在无 NVLink 的 4090 PCIe TP=4 路径上关闭 custom all-reduce；通过 `NCCL_DEBUG=WARN` 保留必要的 NCCL 启动诊断信息。
+
 ## 5. 后续验证要求
 
 这次修正仍然需要在目标 8 卡 4090 服务器上完成运行时验证：
@@ -119,7 +137,7 @@ Prefill 节点增加：
 
 本次质疑中最重要的启动风险和 NCCL 风险已经采纳并反映到实现中。当前方案仍坚持“安全收敛的 MVP 验证基线”：只暴露 gateway，内部节点通过 host 网络的 loopback 地址通信，PD 角色通过 `LMCacheMPConnector` 和 `--kv-transfer-config` 声明。
 
-生产化前仍必须完成目标机实测，并基于实际可用的 vLLM / LMCache 镜像版本固定 tag 或 digest。
+生产化前仍必须完成目标机实测，并基于实际可用的 vLLM / LMCache 镜像版本固定 digest。
 
 参考依据：
 

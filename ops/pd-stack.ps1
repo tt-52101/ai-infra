@@ -1,6 +1,6 @@
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("config", "up", "down", "restart", "ps", "logs", "health", "verify", "pull", "build", "help")]
+    [ValidateSet("config", "up", "down", "restart", "ps", "logs", "health", "verify", "doctor", "repair", "pull", "build", "help")]
     [string]$Command = "help",
 
     [Parameter(Position = 1)]
@@ -38,6 +38,8 @@ Commands:
   logs            Tail logs for stack or target service group
   health          Check gateway health endpoint
   verify          Run MVP TTFT verification script
+  doctor          Verify rendered Compose critical settings
+  repair          Doctor + force recreate stack or target service group
   pull            Pull images
   build           Build gateway image
 
@@ -76,6 +78,48 @@ function Invoke-Compose([string[]]$Args) {
     & docker compose @Args
 }
 
+function Test-RenderedConfig([string]$RenderedConfig) {
+    $failed = $false
+
+    $required = @(
+        "lmcache/vllm-openai:v0.4.5-cu129",
+        "lmcache/standalone:v0.4.5-cu129",
+        "/model",
+        "--disable-custom-all-reduce",
+        "NCCL_DEBUG"
+    )
+    foreach ($needle in $required) {
+        if (-not $RenderedConfig.Contains($needle)) {
+            Write-Host "ERROR: rendered Compose missing required setting: $needle" -ForegroundColor Red
+            $failed = $true
+        }
+    }
+
+    $stale = @(
+        "latest-nightly",
+        "standalone:nightly",
+        "--model /model",
+        "lmcache/lmcache-server"
+    )
+    foreach ($needle in $stale) {
+        if ($RenderedConfig.Contains($needle)) {
+            Write-Host "ERROR: rendered Compose still contains stale setting: $needle" -ForegroundColor Red
+            $failed = $true
+        }
+    }
+
+    if ($failed) {
+        throw "Rendered Compose is stale; fix compose/.env or pull latest repo files before starting containers."
+    }
+
+    Write-Host "OK: rendered Compose uses fixed LMCache/vLLM images, positional /model, disabled custom all-reduce, and NCCL_DEBUG."
+}
+
+function Invoke-Doctor([string[]]$Args) {
+    $rendered = (& docker compose @($ComposeArgs + @("config") + $Args)) -join "`n"
+    Test-RenderedConfig $rendered
+}
+
 if ($Command -eq "help") {
     Show-Usage
     exit 0
@@ -98,19 +142,19 @@ switch ($Command) {
         Invoke-Compose ($ComposeArgs + @("config") + $ExtraArgs)
     }
     "up" {
-        Invoke-Compose ($ComposeArgs + @("up", "-d", "--build") + $Services + $ExtraArgs)
+        Invoke-Compose ($ComposeArgs + @("up", "-d", "--build") + $ExtraArgs + $Services)
     }
     "down" {
         Invoke-Compose ($ComposeArgs + @("down") + $ExtraArgs)
     }
     "restart" {
-        Invoke-Compose ($ComposeArgs + @("restart") + $Services + $ExtraArgs)
+        Invoke-Compose ($ComposeArgs + @("restart") + $ExtraArgs + $Services)
     }
     "ps" {
         Invoke-Compose ($ComposeArgs + @("ps") + $ExtraArgs)
     }
     "logs" {
-        Invoke-Compose ($ComposeArgs + @("logs", "-f", "--tail=200") + $Services + $ExtraArgs)
+        Invoke-Compose ($ComposeArgs + @("logs", "-f", "--tail=200") + $ExtraArgs + $Services)
     }
     "health" {
         Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:8000/healthz" | Select-Object -ExpandProperty Content
@@ -123,6 +167,14 @@ switch ($Command) {
             $env:GATEWAY_API_KEY = "sk-mvp-change-me"
         }
         & python (Join-Path $RootDir "backend/tests/test_verification.py")
+    }
+    "doctor" {
+        Invoke-Doctor $ExtraArgs
+    }
+    "repair" {
+        Invoke-Doctor @()
+        Invoke-Compose ($ComposeArgs + @("up", "-d", "--build", "--force-recreate", "--remove-orphans") + $ExtraArgs + $Services)
+        Invoke-Compose ($ComposeArgs + @("ps") + $Services)
     }
     "pull" {
         Invoke-Compose ($ComposeArgs + @("pull") + $ExtraArgs)

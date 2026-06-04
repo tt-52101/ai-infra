@@ -27,6 +27,8 @@ Commands:
   logs            Tail logs for stack or target service group
   health          Check gateway health endpoint
   verify          Run MVP TTFT verification script
+  doctor          Verify rendered Compose critical settings
+  repair          Doctor + force recreate stack or target service group
   pull            Pull images
   build           Build gateway image
 
@@ -40,6 +42,8 @@ Targets:
 Examples:
   ops/pd-stack.sh config
   ops/pd-stack.sh up
+  ops/pd-stack.sh doctor
+  ops/pd-stack.sh repair prefill
   ops/pd-stack.sh logs gateway
   ops/pd-stack.sh restart decode
   GATEWAY_API_KEY=sk-real ops/pd-stack.sh verify
@@ -57,6 +61,51 @@ fi
 
 dc() {
   docker compose "${compose_args[@]}" "$@"
+}
+
+check_rendered_config() {
+  local rendered="$1"
+  local failed=0
+
+  require_present() {
+    local needle="$1"
+    if [[ "${rendered}" != *"${needle}"* ]]; then
+      echo "ERROR: rendered Compose missing required setting: ${needle}" >&2
+      failed=1
+    fi
+  }
+
+  require_absent() {
+    local needle="$1"
+    if [[ "${rendered}" == *"${needle}"* ]]; then
+      echo "ERROR: rendered Compose still contains stale setting: ${needle}" >&2
+      failed=1
+    fi
+  }
+
+  require_present "lmcache/vllm-openai:v0.4.5-cu129"
+  require_present "lmcache/standalone:v0.4.5-cu129"
+  require_present "/model"
+  require_present "--disable-custom-all-reduce"
+  require_present "NCCL_DEBUG"
+
+  require_absent "latest-nightly"
+  require_absent "standalone:nightly"
+  require_absent "--model /model"
+  require_absent "lmcache/lmcache-server"
+
+  if [[ "${failed}" -ne 0 ]]; then
+    echo "ERROR: rendered Compose is stale; fix compose/.env or pull latest repo files before starting containers." >&2
+    return 1
+  fi
+
+  echo "OK: rendered Compose uses fixed LMCache/vLLM images, positional /model, disabled custom all-reduce, and NCCL_DEBUG."
+}
+
+doctor() {
+  local rendered
+  rendered="$(dc config "$@")"
+  check_rendered_config "${rendered}"
 }
 
 services_for_target() {
@@ -100,21 +149,21 @@ case "${command}" in
     ;;
   up)
     read -r -a services <<<"$(services_for_target "${target}")"
-    dc up -d --build "${services[@]}" "${extra_args[@]}"
+    dc up -d --build "${extra_args[@]}" "${services[@]}"
     ;;
   down)
     dc down "${extra_args[@]}"
     ;;
   restart)
     read -r -a services <<<"$(services_for_target "${target}")"
-    dc restart "${services[@]}" "${extra_args[@]}"
+    dc restart "${extra_args[@]}" "${services[@]}"
     ;;
   ps)
     dc ps "${extra_args[@]}"
     ;;
   logs)
     read -r -a services <<<"$(services_for_target "${target}")"
-    dc logs -f --tail=200 "${services[@]}" "${extra_args[@]}"
+    dc logs -f --tail=200 "${extra_args[@]}" "${services[@]}"
     ;;
   health)
     curl -fsS "http://127.0.0.1:8000/healthz"
@@ -124,6 +173,15 @@ case "${command}" in
     API_URL="${API_URL:-http://127.0.0.1:8000/v1/chat/completions}" \
     GATEWAY_API_KEY="${GATEWAY_API_KEY:-sk-mvp-change-me}" \
       python "${ROOT_DIR}/backend/tests/test_verification.py"
+    ;;
+  doctor)
+    doctor "${extra_args[@]}"
+    ;;
+  repair)
+    doctor
+    read -r -a services <<<"$(services_for_target "${target}")"
+    dc up -d --build --force-recreate --remove-orphans "${extra_args[@]}" "${services[@]}"
+    dc ps "${services[@]}"
     ;;
   pull)
     dc pull "${extra_args[@]}"

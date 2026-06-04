@@ -135,8 +135,11 @@ vllm-prefill:
     - NCCL_P2P_DISABLE=1
     - NCCL_IB_DISABLE=1
     - NCCL_SHM_DISABLE=0
+    - NCCL_DEBUG=WARN
   command: >
+    /model
     --tensor-parallel-size 4
+    --disable-custom-all-reduce
     --enable-prefix-caching
     --enable-chunked-prefill
     --api-key ${VLLM_API_KEY:-sk-mvp-change-me}
@@ -151,8 +154,11 @@ vllm-decode:
     - NCCL_P2P_DISABLE=1
     - NCCL_IB_DISABLE=1
     - NCCL_SHM_DISABLE=0
+    - NCCL_DEBUG=WARN
   command: >
+    /model
     --tensor-parallel-size 4
+    --disable-custom-all-reduce
     --enable-prefix-caching
     --api-key ${VLLM_API_KEY:-sk-mvp-change-me}
     --kv-transfer-config '{"kv_connector":"LMCacheMPConnector","kv_role":"kv_consumer","kv_connector_extra_config":{"lmcache.mp.port":6555}}'
@@ -377,7 +383,7 @@ PowerShell 环境可使用：
 - 当前方案验证的是单机多 vLLM 节点，不是跨物理机分布式集群。
 - Gateway 的 Prefill 编排是 MVP 实现，不等同于 vLLM 原生生产级 PD disaggregation 调度器。
 - LMCache 是否命中取决于版本兼容、请求前缀一致性、缓存配置和 vLLM 集成行为。
-- 当前 `.env.example` 仍允许 `latest` 镜像用于快速 MVP，不适合作为生产可复现版本。
+- 当前 `.env.example` 默认使用 `lmcache/vllm-openai:v0.4.5-cu129` 和 `lmcache/standalone:v0.4.5-cu129`，用于避免 nightly 漂移；生产化仍应在目标机验证后固定到 digest。
 - DeepSeek-V3/R1 全量模型通常不适合直接以 8 张 24GB 4090 承载，MVP 应优先使用可在 TP=4 下加载的量化版或蒸馏版。
 - LMCache 本地 CPU 缓存大小需要基于宿主机内存和命中率压测调整。
 

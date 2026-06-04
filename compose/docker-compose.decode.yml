@@ -1,7 +1,7 @@
 services:
   # Decode 节点：绑定宿主机 GPU 4-7，负责高并发流式输出和 KV Cache 消费
   vllm-decode:
-    image: ${VLLM_IMAGE:-lmcache/vllm-openai:latest-nightly}
+    image: ${VLLM_IMAGE:-lmcache/vllm-openai:v0.4.5-cu129}
     container_name: vllm-decode-cluster
     network_mode: host
     environment:
@@ -9,6 +9,7 @@ services:
       - NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
       - NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-1}
       - NCCL_SHM_DISABLE=${NCCL_SHM_DISABLE:-0}
+      - NCCL_DEBUG=${NCCL_DEBUG:-WARN}
       - LMCACHE_CONFIG_FILE=/vllm-workspace/lmcache_config.yaml
     volumes:
       - ${MODEL_PATH:-/data/temp/yhb/DeepSeek-V4-Flash}:/model:ro
@@ -27,10 +28,11 @@ services:
               device_ids: ['4', '5', '6', '7']
               capabilities: [gpu]
     command: >
-      --model /model
+      /model
       --quantization ${MODEL_QUANTIZATION:-awq}
       --dtype ${MODEL_DTYPE:-float16}
       --tensor-parallel-size 4
+      --disable-custom-all-reduce
       --trust-remote-code
       --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION:-0.80}
       --max-model-len ${MAX_MODEL_LEN:-32768}

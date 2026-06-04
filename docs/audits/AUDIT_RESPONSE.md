@@ -37,7 +37,7 @@
 
 | 审计问题 | 响应 | 原因 |
 | --- | --- | --- |
-| 固定镜像版本 | 部分采纳 | 当前已参数化 `VLLM_IMAGE` 和 `LMCACHE_IMAGE`，但不在本机虚构版本号。目标 GPU 服务器完成首次成功部署后，应把实际可用 tag 或 digest 固化。 |
+| 固定镜像版本 | 已采纳到 MVP 默认值 | `.env.example` 与 Compose 默认值已固定到 `lmcache/vllm-openai:v0.4.5-cu129` 和 `lmcache/standalone:v0.4.5-cu129`，避免 nightly 漂移。生产化仍应在目标 GPU 服务器验证后固定到镜像 digest。 |
 | 健康检查依赖 `/health` | 部分采纳 | vLLM OpenAI server 通常提供 `/health`，但不同镜像版本可能有差异。目标机需用 `docker compose ps` 和日志确认。 |
 | LMCache Standalone 健康检查 | 部分采纳 | 当前通过 HTTP `/healthcheck` 检查 standalone 服务就绪，并保留指标接入作为后续生产化优化。 |
 | 资源 limits | 部分采纳 | Compose 中硬设 CPU/memory limit 可能误伤 8 卡推理启动。建议先完成 MVP 压测，再根据实测显存、CPU 内存和 KV Cache 占用设置硬限制。 |
@@ -118,7 +118,7 @@ flowchart LR
 
 执行项：
 
-- 固定 `VLLM_IMAGE`、`LMCACHE_IMAGE` 到实际验证过的 tag 或 digest。
+- 将 `VLLM_IMAGE`、`LMCACHE_IMAGE` 从当前 MVP 固定 tag 进一步固定到目标机实测通过的 digest。
 - 引入 Nginx/Traefik 做 TLS、限流、请求大小限制和统一审计日志。
 - 接入 Prometheus/Grafana，采集 TTFT、TPOT、tokens/s、LMCache 命中率、GPU 显存、CPU 内存和 HTTP 5xx。
 - 根据压测结果设置 CPU、memory、并发和 batch 上限。

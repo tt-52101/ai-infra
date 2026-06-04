@@ -30,11 +30,12 @@ cp compose/.env.example compose/.env
 
 ```bash
 MODEL_PATH=/data/temp/yhb/DeepSeek-V4-Flash
-VLLM_IMAGE=lmcache/vllm-openai:latest-nightly
-LMCACHE_IMAGE=lmcache/standalone:nightly
+VLLM_IMAGE=lmcache/vllm-openai:v0.4.5-cu129
+LMCACHE_IMAGE=lmcache/standalone:v0.4.5-cu129
 LMCACHE_MP_PORT=6555
 VLLM_API_KEY=sk-change-123
 GATEWAY_API_KEY=sk-change-123
+NCCL_DEBUG=WARN
 ```
 
 当前 Compose 按 LMCache 官方 Docker 示例使用 host 网络等价部署。Prefill、Decode 和 LMCache 只绑定 `127.0.0.1` 上的内部端口，Gateway 是唯一对外业务入口。
@@ -55,6 +56,7 @@ Linux:
 
 ```bash
 bash ops/pd-stack.sh config
+bash ops/pd-stack.sh doctor
 bash ops/pd-stack.sh up
 bash ops/pd-stack.sh ps
 bash ops/pd-stack.sh logs gateway
@@ -67,6 +69,7 @@ PowerShell:
 
 ```powershell
 .\ops\pd-stack.ps1 config
+.\ops\pd-stack.ps1 doctor
 .\ops\pd-stack.ps1 up
 .\ops\pd-stack.ps1 ps
 .\ops\pd-stack.ps1 logs gateway
@@ -93,7 +96,17 @@ PowerShell:
 bash ops/pd-stack.sh logs prefill
 bash ops/pd-stack.sh restart decode
 bash ops/pd-stack.sh up gateway
+bash ops/pd-stack.sh repair prefill
 ```
+
+如果日志中仍然出现 `--model` 弃用提示、`disable_custom_all_reduce=False`、`latest-nightly` 或 `free(): double free detected`，不要只执行 `restart`。先执行：
+
+```bash
+bash ops/pd-stack.sh doctor
+bash ops/pd-stack.sh repair prefill
+```
+
+`doctor` 会检查渲染后的 Compose 是否仍包含旧镜像或旧 vLLM 参数；`repair` 会在检查通过后使用 `--force-recreate --remove-orphans` 强制重建目标服务，避免旧容器继续沿用历史启动命令。
 
 ## 5. 验证标准
 
@@ -101,6 +114,7 @@ bash ops/pd-stack.sh up gateway
 
 ```bash
 bash ops/pd-stack.sh config
+bash ops/pd-stack.sh doctor
 bash ops/pd-stack.sh up
 bash ops/pd-stack.sh health
 bash ops/pd-stack.sh verify
@@ -120,8 +134,9 @@ bash ops/pd-stack.sh verify
 | --- | --- |
 | `vllm-prefill` 启动失败 | `MODEL_PATH`、GPU 0-3 可见性、模型是否支持 TP=4 |
 | `vllm-decode` 启动失败 | GPU 4-7 物理绑定、容器内 CUDA 编号是否为 0-3 |
+| vLLM 启动后出现 `free(): double free detected` 或 NCCL worker 初始化失败 | 避免使用 nightly 镜像；确认 `VLLM_IMAGE=lmcache/vllm-openai:v0.4.5-cu129`、模型路径使用位置参数 `/model`、Prefill/Decode 均保留 `--disable-custom-all-reduce` 和 `NCCL_DEBUG=WARN` |
 | 宿主机外部能访问 `8001` / `8002` / `6555` | 检查 vLLM 是否仍有 `--host 127.0.0.1`，LMCache 是否仍有 `--http-host 127.0.0.1` |
-| `lmcache/lmcache-server` 拉取失败 | 当前不再使用该历史仓库镜像，确认 `LMCACHE_IMAGE=lmcache/standalone:nightly` 或目标机验证过的 standalone tag |
+| `lmcache/lmcache-server` 拉取失败 | 当前不再使用该历史仓库镜像，确认 `LMCACHE_IMAGE=lmcache/standalone:v0.4.5-cu129` 或目标机验证过的 standalone tag |
 | Gateway 镜像构建时 pip 访问 PyPI 超时 | 在 `compose/.env` 配置 `PIP_INDEX_URL`、`PIP_DEFAULT_TIMEOUT`、`PIP_RETRIES` 后重新执行 `bash ops/pd-stack.sh build gateway` |
 | gateway 返回 401 | `GATEWAY_API_KEY` 是否与请求 Bearer token 一致 |
 | gateway 返回 prefill failed | `vllm-prefill` 日志、LMCache 健康检查、`UPSTREAM_API_KEY` |

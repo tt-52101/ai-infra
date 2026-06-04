@@ -82,13 +82,19 @@ class MvpPdAssetsTest(unittest.TestCase):
 
         self.assertIn("CUDA_VISIBLE_DEVICES=0,1,2,3", prefill)
         self.assertIn("device_ids: ['0', '1', '2', '3']", prefill)
+        self.assertNotIn("--model /model", prefill)
+        self.assertIn("  /model", prefill)
         self.assertIn("--tensor-parallel-size 4", prefill)
+        self.assertIn("--disable-custom-all-reduce", prefill)
         self.assertIn("--host 127.0.0.1", prefill)
         self.assertIn("--port 8001", prefill)
 
         self.assertIn("CUDA_VISIBLE_DEVICES=0,1,2,3", decode)
         self.assertIn("device_ids: ['4', '5', '6', '7']", decode)
+        self.assertNotIn("--model /model", decode)
+        self.assertIn("  /model", decode)
         self.assertIn("--tensor-parallel-size 4", decode)
+        self.assertIn("--disable-custom-all-reduce", decode)
         self.assertIn("--host 127.0.0.1", decode)
         self.assertIn("--port 8002", decode)
 
@@ -98,6 +104,7 @@ class MvpPdAssetsTest(unittest.TestCase):
             self.assertIn("NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}", block)
             self.assertIn("NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-1}", block)
             self.assertIn("NCCL_SHM_DISABLE=${NCCL_SHM_DISABLE:-0}", block)
+            self.assertIn("NCCL_DEBUG=${NCCL_DEBUG:-WARN}", block)
             self.assertIn("LMCACHE_CONFIG_FILE=/vllm-workspace/lmcache_config.yaml", block)
             self.assertIn("--kv-transfer-config", block)
             self.assertIn("LMCacheMPConnector", block)
@@ -128,7 +135,7 @@ class MvpPdAssetsTest(unittest.TestCase):
         self.assertNotIn("expose:", lmcache)
         self.assertIn("${LMCACHE_MP_PORT:-6555}", lmcache)
         self.assertIn("${LMCACHE_HTTP_PORT:-8080}", lmcache)
-        self.assertIn("${LMCACHE_IMAGE:-lmcache/standalone:nightly}", lmcache)
+        self.assertIn("${LMCACHE_IMAGE:-lmcache/standalone:v0.4.5-cu129}", lmcache)
         self.assertNotIn("lmcache/lmcache-server", lmcache)
         self.assertIn("/opt/venv/bin/lmcache", lmcache)
         self.assertIn("server", lmcache)
@@ -144,7 +151,7 @@ class MvpPdAssetsTest(unittest.TestCase):
         for block in (prefill, decode):
             self.assertNotIn("ports:", block)
             self.assertNotIn("expose:", block)
-            self.assertIn("${VLLM_IMAGE:-lmcache/vllm-openai:latest-nightly}", block)
+            self.assertIn("${VLLM_IMAGE:-lmcache/vllm-openai:v0.4.5-cu129}", block)
             self.assertIn("--api-key", block)
             self.assertIn("${VLLM_API_KEY:-sk-mvp-change-me}", block)
             self.assertIn("--enable-prefix-caching", block)
@@ -179,6 +186,25 @@ class MvpPdAssetsTest(unittest.TestCase):
             self.assertIn("logs", script)
             self.assertIn("health", script)
             self.assertIn("verify", script)
+
+    def test_ops_scripts_can_repair_stale_vllm_containers(self) -> None:
+        shell_script = read(OPS_SH)
+        powershell_script = read(OPS_PS1)
+
+        for script in (shell_script, powershell_script):
+            self.assertIn("doctor", script)
+            self.assertIn("repair", script)
+            self.assertIn("--force-recreate", script)
+            self.assertIn("--remove-orphans", script)
+            self.assertIn("latest-nightly", script)
+            self.assertIn("--model /model", script)
+            self.assertIn("--disable-custom-all-reduce", script)
+            self.assertIn("NCCL_DEBUG", script)
+            self.assertIn("lmcache/vllm-openai:v0.4.5-cu129", script)
+
+        runbook = read(OPS_RUNBOOK)
+        self.assertIn("bash ops/pd-stack.sh doctor", runbook)
+        self.assertIn("bash ops/pd-stack.sh repair prefill", runbook)
 
     def test_lmcache_shared_backend_contract(self) -> None:
         config = read(LMCACHE_CONFIG)
