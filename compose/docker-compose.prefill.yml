@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  # Prefill 节点：绑定宿主机 GPU 0-3，负责长上下文 prefill 和 KV Cache 生产
+  vllm-prefill:
+    image: ${VLLM_IMAGE:-lmcache/vllm-openai:latest}
+    container_name: vllm-prefill-cluster
+    expose:
+      - "8001"
+    environment:
+      - CUDA_VISIBLE_DEVICES=0,1,2,3
+      - NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
+      - NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-1}
+      - NCCL_SHM_DISABLE=${NCCL_SHM_DISABLE:-0}
+      - LMCACHE_CONFIG_FILE=/vllm-workspace/lmcache_config.yaml
+    volumes:
+      - ${MODEL_PATH:-/data/temp/yhb/DeepSeek-V4-Flash}:/model:ro
+      - ./lmcache_config.yaml:/vllm-workspace/lmcache_config.yaml:ro
+    ipc: host
+    ulimits:
+      memlock: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              ids: ['0', '1', '2', '3']
+              capabilities: [gpu]
+    command: >
+      --model /model
+      --quantization ${MODEL_QUANTIZATION:-awq}
+      --dtype ${MODEL_DTYPE:-float16}
+      --tensor-parallel-size 4
+      --trust-remote-code
+      --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION:-0.80}
+      --max-model-len ${MAX_MODEL_LEN:-32768}
+      --max-num-seqs ${PREFILL_MAX_NUM_SEQS:-16}
+      --max-num-batched-tokens ${PREFILL_MAX_NUM_BATCHED_TOKENS:-32768}
+      --enable-prefix-caching
+      --enable-chunked-prefill
+      --api-key ${VLLM_API_KEY:-sk-mvp-change-me}
+      --kv-transfer-config '{"kv_connector":"LMCacheMPConnector","kv_connector_module_path":"lmcache.integration.vllm.lmcache_mp_connector","kv_role":"kv_producer","kv_connector_extra_config":{"lmcache.mp.host":"tcp://lmcache-server","lmcache.mp.port":5555}}'
+      --port 8001
+    depends_on:
+      lmcache-server:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=5).read()"
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 300s
+    stop_grace_period: 120s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    networks:
+      - ds-pd-network

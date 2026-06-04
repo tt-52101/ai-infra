@@ -7,6 +7,7 @@ import httpx
 
 API_URL = os.getenv("API_URL", "http://localhost:8000/v1/chat/completions")
 MODEL = os.getenv("MODEL", "/model")
+GATEWAY_API_KEY = os.getenv("GATEWAY_API_KEY", "sk-mvp-change-me")
 LONG_PREFIX_REPEAT = int(os.getenv("LONG_PREFIX_REPEAT", "1500"))
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "300"))
 
@@ -43,6 +44,7 @@ def run_stream_request(label: str, user_prompt: str) -> dict:
         "POST",
         API_URL,
         json=payload(user_prompt),
+        headers={"Authorization": f"Bearer {GATEWAY_API_KEY}"},
         timeout=REQUEST_TIMEOUT_SECONDS,
     ) as response:
         response.raise_for_status()

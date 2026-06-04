@@ -11,6 +11,8 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 PREFILL_NODE_URL = os.getenv("PREFILL_NODE_URL", "http://vllm-prefill:8001/v1/chat/completions")
 DECODE_NODE_URL = os.getenv("DECODE_NODE_URL", "http://vllm-decode:8002/v1/chat/completions")
+UPSTREAM_API_KEY = os.getenv("UPSTREAM_API_KEY", "")
+GATEWAY_API_KEY = os.getenv("GATEWAY_API_KEY", "")
 PREFILL_TIMEOUT_SECONDS = float(os.getenv("PREFILL_TIMEOUT_SECONDS", "300"))
 DECODE_TIMEOUT_SECONDS = float(os.getenv("DECODE_TIMEOUT_SECONDS", "300"))
 PREFILL_MAX_TOKENS = int(os.getenv("PREFILL_MAX_TOKENS", "1"))
@@ -18,10 +20,21 @@ PREFILL_MAX_TOKENS = int(os.getenv("PREFILL_MAX_TOKENS", "1"))
 app = FastAPI(title="DeepSeek vLLM PD Separation Gateway")
 
 
-def proxy_headers(request: Request) -> dict[str, str]:
+def authorize_client(request: Request) -> None:
+    if not GATEWAY_API_KEY:
+        return
+    expected = f"Bearer {GATEWAY_API_KEY}"
+    actual = request.headers.get("authorization", "")
+    if actual != expected:
+        raise PermissionError("invalid or missing bearer token")
+
+
+def upstream_headers(request: Request) -> dict[str, str]:
     headers = dict(request.headers)
-    for key in ("host", "content-length"):
+    for key in ("host", "content-length", "authorization"):
         headers.pop(key, None)
+    if UPSTREAM_API_KEY:
+        headers["authorization"] = f"Bearer {UPSTREAM_API_KEY}"
     return headers
 
 
@@ -52,6 +65,8 @@ async def healthz() -> dict[str, Any]:
         "prefill_node_url": PREFILL_NODE_URL,
         "decode_node_url": DECODE_NODE_URL,
         "prefill_max_tokens": PREFILL_MAX_TOKENS,
+        "gateway_auth_enabled": bool(GATEWAY_API_KEY),
+        "upstream_auth_enabled": bool(UPSTREAM_API_KEY),
     }
 
 
@@ -96,12 +111,17 @@ def pd_headers(prefill_status: str, prefill_ms: int, request_id: str) -> dict[st
 
 @app.post("/v1/chat/completions")
 async def dispatch_chat_completions(request: Request) -> Response:
+    try:
+        authorize_client(request)
+    except PermissionError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=401)
+
     body = await request.json()
     if not isinstance(body, dict):
         return JSONResponse({"error": "request body must be a JSON object"}, status_code=400)
 
     request_id = request.headers.get("x-request-id", str(uuid.uuid4()))
-    headers = proxy_headers(request)
+    headers = upstream_headers(request)
     stream = bool(body.get("stream", False))
 
     print(

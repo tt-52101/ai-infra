@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  # LMCache Server：内部 KV Cache 共享层，不对宿主机暴露端口
+  lmcache-server:
+    image: ${LMCACHE_IMAGE:-lmcache/lmcache-server:latest}
+    container_name: lmcache-server
+    expose:
+      - "5555"
+      - "8080"
+    environment:
+      - LMCACHE_SERVER_PORT=5555
+      - LMCACHE_HTTP_PORT=8080
+    volumes:
+      - ${LMCACHE_STORAGE_PATH:-./lmcache_storage}:/tmp/lmcache_storage
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import socket; s=socket.create_connection(('127.0.0.1', 5555), 5); s.close()"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    networks:
+      - ds-pd-network

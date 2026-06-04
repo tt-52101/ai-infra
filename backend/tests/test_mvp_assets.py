@@ -5,13 +5,34 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 COMPOSE = ROOT / "compose" / "docker-compose.yml"
+COMPOSE_LMCACHE = ROOT / "compose" / "docker-compose.lmcache.yml"
+COMPOSE_PREFILL = ROOT / "compose" / "docker-compose.prefill.yml"
+COMPOSE_DECODE = ROOT / "compose" / "docker-compose.decode.yml"
+COMPOSE_GATEWAY = ROOT / "compose" / "docker-compose.gateway.yml"
 LMCACHE_CONFIG = ROOT / "compose" / "lmcache_config.yaml"
 GATEWAY = ROOT / "backend" / "gateway.py"
 DESIGN_DOC = ROOT / "docs" / "mvp-pd-separation-design.md"
+OPS_RUNBOOK = ROOT / "docs" / "ops-runbook.md"
+AUDIT_RESPONSE = ROOT / "docs" / "audits" / "AUDIT_RESPONSE.md"
+THIRD_PARTY_RESPONSE = ROOT / "docs" / "audits" / "mvp-pd-separation-design_三方质疑回复.md"
+OPS_SH = ROOT / "ops" / "pd-stack.sh"
+OPS_PS1 = ROOT / "ops" / "pd-stack.ps1"
+
+COMPOSE_FILES = [
+    COMPOSE,
+    COMPOSE_LMCACHE,
+    COMPOSE_PREFILL,
+    COMPOSE_DECODE,
+    COMPOSE_GATEWAY,
+]
 
 
 def read(path: pathlib.Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def compose_text() -> str:
+    return "\n".join(read(path) for path in COMPOSE_FILES)
 
 
 def service_block(compose_text: str, service_name: str) -> str:
@@ -23,8 +44,24 @@ def service_block(compose_text: str, service_name: str) -> str:
 
 
 class MvpPdAssetsTest(unittest.TestCase):
+    def test_compose_is_split_by_capability(self) -> None:
+        for path in COMPOSE_FILES:
+            self.assertTrue(path.exists(), f"{path.name} should exist")
+
+        base = read(COMPOSE)
+        self.assertIn("ds-pd-network:", base)
+        self.assertNotIn("lmcache-server:", base)
+        self.assertNotIn("vllm-prefill:", base)
+        self.assertNotIn("vllm-decode:", base)
+        self.assertNotIn("gateway:", base)
+
+        self.assertIn("lmcache-server:", read(COMPOSE_LMCACHE))
+        self.assertIn("vllm-prefill:", read(COMPOSE_PREFILL))
+        self.assertIn("vllm-decode:", read(COMPOSE_DECODE))
+        self.assertIn("gateway:", read(COMPOSE_GATEWAY))
+
     def test_compose_declares_pd_topology_and_gateway(self) -> None:
-        compose = read(COMPOSE)
+        compose = compose_text()
 
         self.assertIn("lmcache-server:", compose)
         self.assertIn("vllm-prefill:", compose)
@@ -40,36 +77,99 @@ class MvpPdAssetsTest(unittest.TestCase):
         self.assertIn("--tensor-parallel-size 4", prefill)
         self.assertIn("--port 8001", prefill)
 
-        self.assertIn("CUDA_VISIBLE_DEVICES=4,5,6,7", decode)
+        self.assertIn("CUDA_VISIBLE_DEVICES=0,1,2,3", decode)
         self.assertIn("ids: ['4', '5', '6', '7']", decode)
         self.assertIn("--tensor-parallel-size 4", decode)
         self.assertIn("--port 8002", decode)
 
         for block in (prefill, decode):
-            self.assertIn("NCCL_P2P_DISABLE=1", block)
-            self.assertIn("NCCL_IB_DISABLE=1", block)
-            self.assertIn("LMCACHE_ENABLE=True", block)
-            self.assertIn("LMCACHE_SERVER_ADDR=lmcache-server", block)
+            self.assertIn("NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}", block)
+            self.assertIn("NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-1}", block)
+            self.assertIn("NCCL_SHM_DISABLE=${NCCL_SHM_DISABLE:-0}", block)
             self.assertIn("LMCACHE_CONFIG_FILE=/vllm-workspace/lmcache_config.yaml", block)
+            self.assertIn("--kv-transfer-config", block)
+            self.assertIn("LMCacheMPConnector", block)
+            self.assertIn("ulimits:", block)
+            self.assertIn("memlock: -1", block)
+            self.assertIn("nofile:", block)
+
+        self.assertIn("--enable-chunked-prefill", prefill)
 
         self.assertIn('"8000:8000"', gateway)
         self.assertIn("PREFILL_NODE_URL=http://vllm-prefill:8001/v1/chat/completions", gateway)
         self.assertIn("DECODE_NODE_URL=http://vllm-decode:8002/v1/chat/completions", gateway)
 
+    def test_audit_security_hardening_contract(self) -> None:
+        compose = compose_text()
+        lmcache = service_block(compose, "lmcache-server")
+        prefill = service_block(compose, "vllm-prefill")
+        decode = service_block(compose, "vllm-decode")
+        gateway = service_block(compose, "gateway")
+
+        self.assertIn('max-size: "50m"', compose)
+        self.assertIn('max-file: "5"', compose)
+
+        self.assertNotIn("ports:", lmcache)
+        self.assertIn("expose:", lmcache)
+        self.assertIn('"5555"', lmcache)
+        self.assertIn('"8080"', lmcache)
+
+        for block in (prefill, decode):
+            self.assertNotIn("ports:", block)
+            self.assertIn("expose:", block)
+            self.assertIn("--api-key", block)
+            self.assertIn("${VLLM_API_KEY:-sk-mvp-change-me}", block)
+            self.assertIn("--enable-prefix-caching", block)
+            self.assertIn("--kv-transfer-config", block)
+            self.assertIn("LMCacheMPConnector", block)
+            self.assertIn("lmcache.integration.vllm.lmcache_mp_connector", block)
+            self.assertIn("logging:", block)
+            self.assertIn('max-size: "50m"', block)
+
+        self.assertIn('"8000:8000"', gateway)
+        self.assertIn("UPSTREAM_API_KEY=${VLLM_API_KEY:-sk-mvp-change-me}", gateway)
+        self.assertIn("GATEWAY_API_KEY=${GATEWAY_API_KEY:-sk-mvp-change-me}", gateway)
+        self.assertIn("healthcheck:", gateway)
+        self.assertIn("logging:", gateway)
+        self.assertIn('max-size: "50m"', gateway)
+
+    def test_ops_scripts_wrap_compose_files(self) -> None:
+        shell_script = read(OPS_SH)
+        powershell_script = read(OPS_PS1)
+
+        for script in (shell_script, powershell_script):
+            self.assertIn("docker-compose.yml", script)
+            self.assertIn("docker-compose.lmcache.yml", script)
+            self.assertIn("docker-compose.prefill.yml", script)
+            self.assertIn("docker-compose.decode.yml", script)
+            self.assertIn("docker-compose.gateway.yml", script)
+            self.assertIn("config", script)
+            self.assertIn("up", script)
+            self.assertIn("down", script)
+            self.assertIn("logs", script)
+            self.assertIn("health", script)
+            self.assertIn("verify", script)
+
     def test_lmcache_shared_backend_contract(self) -> None:
         config = read(LMCACHE_CONFIG)
 
         self.assertIn("chunk_size: 256", config)
-        self.assertIn('backend: "gpu"', config)
-        self.assertIn("local_cpu_percentage: 0.4", config)
-        self.assertIn('remote_url: "lmcache-server://lmcache-server:65432"', config)
+        self.assertIn("local_cpu: true", config)
+        self.assertIn("max_local_cpu_size: 5", config)
+        self.assertNotIn('backend: "gpu"', config)
+        self.assertNotIn("local_cpu_percentage: 0.4", config)
+        self.assertNotIn("remote_url:", config)
 
     def test_gateway_is_container_aware_and_observable(self) -> None:
         gateway = read(GATEWAY)
 
         self.assertIn('os.getenv("PREFILL_NODE_URL"', gateway)
         self.assertIn('os.getenv("DECODE_NODE_URL"', gateway)
+        self.assertIn('os.getenv("UPSTREAM_API_KEY"', gateway)
+        self.assertIn('os.getenv("GATEWAY_API_KEY"', gateway)
         self.assertIn('@app.get("/healthz")', gateway)
+        self.assertIn("authorize_client", gateway)
+        self.assertIn("upstream_headers", gateway)
         self.assertIn("x-prefill-status", gateway)
         self.assertIn("x-prefill-ms", gateway)
         self.assertIn("StreamingResponse", gateway)
@@ -87,6 +187,41 @@ class MvpPdAssetsTest(unittest.TestCase):
         self.assertIn("Decode", doc)
         self.assertIn("验证指标", doc)
         self.assertIn("5 卡 Prefill / 3 卡 Decode", doc)
+        self.assertIn("docker-compose.lmcache.yml", doc)
+        self.assertIn("ops/pd-stack.sh", doc)
+
+    def test_ops_runbook_exists(self) -> None:
+        doc = read(OPS_RUNBOOK)
+
+        self.assertIn("# DeepSeek PD MVP 运维手册", doc)
+        self.assertIn("docker-compose.lmcache.yml", doc)
+        self.assertIn("ops/pd-stack.sh", doc)
+        self.assertIn("ops/pd-stack.ps1", doc)
+        self.assertIn("restart decode", doc)
+        self.assertIn("verify", doc)
+
+    def test_third_party_challenge_response_doc_exists(self) -> None:
+        doc = read(THIRD_PARTY_RESPONSE)
+
+        self.assertIn("# 三方质疑正面回复", doc)
+        self.assertIn("容器内 GPU 编号", doc)
+        self.assertIn("CUDA_VISIBLE_DEVICES=0,1,2,3", doc)
+        self.assertIn("NCCL_SHM_DISABLE=0", doc)
+        self.assertIn("memlock", doc)
+        self.assertIn("--enable-chunked-prefill", doc)
+        self.assertIn("不采纳", doc)
+        self.assertIn("LMCache 端口", doc)
+
+    def test_audit_response_doc_exists(self) -> None:
+        doc = read(AUDIT_RESPONSE)
+
+        self.assertIn("# 三方审计报告响应与优化方案", doc)
+        self.assertIn("正面回复", doc)
+        self.assertIn("采纳", doc)
+        self.assertIn("不直接采纳", doc)
+        self.assertIn("--kv-transfer-config", doc)
+        self.assertIn("LMCacheMPConnector", doc)
+        self.assertIn("优化路线", doc)
 
 
 if __name__ == "__main__":

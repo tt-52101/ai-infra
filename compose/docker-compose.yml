@@ -1,119 +1,13 @@
 version: '3.8'
 
-services:
-  # LMCache Server：作为中心化的分布式 KV Cache 共享存储仓库
-  lmcache-server:
-    image: lmcache/lmcache-server:latest
-    container_name: lmcache-server
-    ports:
-      - "65432:65432"
-    environment:
-      - LMCACHE_SERVER_PORT=65432
-    volumes:
-      - ./lmcache_storage:/tmp/lmcache_storage
-    restart: unless-stopped
-    networks:
-      - ds-pd-network
-
-  # === Prefill 节点（绑定 GPU 0, 1, 2, 3，负责大文本首字计算） ===
-  vllm-prefill:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
-    container_name: vllm-prefill-cluster
-    ports:
-      - "8001:8001"
-    environment:
-      - CUDA_VISIBLE_DEVICES=0,1,2,3
-      - NCCL_P2P_DISABLE=1             # 4090 跨卡无 NVLink 必须禁用 P2P 否则卡死
-      - NCCL_IB_DISABLE=1
-      - LMCACHE_ENABLE=True
-      - LMCACHE_SERVER_ADDR=lmcache-server
-      - LMCACHE_SERVER_PORT=65432
-      - LMCACHE_CONFIG_FILE=/vllm-workspace/lmcache_config.yaml
-    volumes:
-      - ${MODEL_PATH:-/data/models/DeepSeek-V4-Flash-AWQ}:/model:ro
-      - ./lmcache_config.yaml:/vllm-workspace/lmcache_config.yaml
-    ipc: host
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              ids: ['0', '1', '2', '3']
-              capabilities: [gpu]
-    command: >
-      --model /model
-      --quantization ${MODEL_QUANTIZATION:-awq}
-      --tensor-parallel-size 4
-      --trust-remote-code
-      --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION:-0.85}
-      --max-model-len ${MAX_MODEL_LEN:-32768}
-      --port 8001
-    depends_on:
-      - lmcache-server
-    restart: unless-stopped
-    networks:
-      - ds-pd-network
-
-  # === Decode 节点（绑定 GPU 4, 5, 6, 7，负责高并发流式吐字） ===
-  vllm-decode:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
-    container_name: vllm-decode-cluster
-    ports:
-      - "8002:8002"
-    environment:
-      - CUDA_VISIBLE_DEVICES=4,5,6,7
-      - NCCL_P2P_DISABLE=1
-      - NCCL_IB_DISABLE=1
-      - LMCACHE_ENABLE=True
-      - LMCACHE_SERVER_ADDR=lmcache-server
-      - LMCACHE_SERVER_PORT=65432
-      - LMCACHE_CONFIG_FILE=/vllm-workspace/lmcache_config.yaml
-    volumes:
-      - ${MODEL_PATH:-/data/models/DeepSeek-V4-Flash-AWQ}:/model:ro
-      - ./lmcache_config.yaml:/vllm-workspace/lmcache_config.yaml
-    ipc: host
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              ids: ['4', '5', '6', '7']
-              capabilities: [gpu]
-    command: >
-      --model /model
-      --quantization ${MODEL_QUANTIZATION:-awq}
-      --tensor-parallel-size 4
-      --trust-remote-code
-      --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION:-0.85}
-      --max-model-len ${MAX_MODEL_LEN:-32768}
-      --port 8002
-    depends_on:
-      - lmcache-server
-    restart: unless-stopped
-    networks:
-      - ds-pd-network
-
-  # === OpenAI 兼容统一入口：先触发 Prefill，再转发 Decode ===
-  gateway:
-    build:
-      context: ../backend
-      dockerfile: Dockerfile
-    image: deepseek-pd-gateway:local
-    container_name: deepseek-pd-gateway
-    ports:
-      - "8000:8000"
-    environment:
-      - PREFILL_NODE_URL=http://vllm-prefill:8001/v1/chat/completions
-      - DECODE_NODE_URL=http://vllm-decode:8002/v1/chat/completions
-      - PREFILL_TIMEOUT_SECONDS=${PREFILL_TIMEOUT_SECONDS:-300}
-      - DECODE_TIMEOUT_SECONDS=${DECODE_TIMEOUT_SECONDS:-300}
-      - PREFILL_MAX_TOKENS=${PREFILL_MAX_TOKENS:-1}
-    depends_on:
-      - vllm-prefill
-      - vllm-decode
-    restart: unless-stopped
-    networks:
-      - ds-pd-network
+# Base Compose file.
+# Do not add services here; keep deployable capabilities in:
+# - docker-compose.lmcache.yml
+# - docker-compose.prefill.yml
+# - docker-compose.decode.yml
+# - docker-compose.gateway.yml
+#
+# Use ../ops/pd-stack.sh or ../ops/pd-stack.ps1 to combine files safely.
 
 networks:
   ds-pd-network:

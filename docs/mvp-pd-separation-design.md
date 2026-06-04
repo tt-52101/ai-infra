@@ -39,8 +39,8 @@ MVP 的验证目标不是证明 8 张 RTX 4090 可以稳定承载 DeepSeek-V3/R1
 
 MVP 定稿方案将一个 TP=8 通信组拆成两个 TP=4 通信组：
 
-- `vllm-prefill`: GPU 0,1,2,3，`--tensor-parallel-size 4`。
-- `vllm-decode`: GPU 4,5,6,7，`--tensor-parallel-size 4`。
+- `vllm-prefill`: 宿主机 GPU 0,1,2,3，容器内 `CUDA_VISIBLE_DEVICES=0,1,2,3`，`--tensor-parallel-size 4`。
+- `vllm-decode`: 宿主机 GPU 4,5,6,7，容器内重新枚举为 `CUDA_VISIBLE_DEVICES=0,1,2,3`，`--tensor-parallel-size 4`。
 
 预期收益是通信参与 GPU 数量减少、单个 collective 组更小、PCIe 争用更低。是否达到目标，以 NCCL 错误率、Prefill 耗时、Decode TTFT 和 GPU 利用率数据为准。
 
@@ -73,10 +73,10 @@ MVP 需要验证的不是“绝对不卡顿”，而是在相同并发压力下�
 
 ```mermaid
 flowchart LR
-    client["Client / OpenAI SDK"] --> gateway["gateway :8000"]
-    gateway --> prefill["vllm-prefill :8001<br/>GPU 0-3, TP=4"]
-    prefill --> lmcache["lmcache-server :65432<br/>shared KV Cache"]
-    gateway --> decode["vllm-decode :8002<br/>GPU 4-7, TP=4"]
+    client["Client / OpenAI SDK<br/>Bearer auth"] --> gateway["gateway :8000"]
+    gateway --> prefill["vllm-prefill :8001 internal<br/>GPU 0-3, TP=4, kv_producer"]
+    prefill --> lmcache["lmcache-server :5555 internal<br/>shared KV Cache"]
+    gateway --> decode["vllm-decode :8002 internal<br/>GPU 4-7, TP=4, kv_consumer"]
     lmcache --> decode
 ```
 
@@ -84,14 +84,14 @@ flowchart LR
 
 | 组件 | 端口 | GPU | 职责 |
 | --- | --- | --- | --- |
-| `lmcache-server` | `65432` | 无 | 集中式 KV Cache 共享层 |
-| `vllm-prefill` | `8001` | `0,1,2,3` | 长上下文 Prefill，生产 KV Cache |
-| `vllm-decode` | `8002` | `4,5,6,7` | Decode 和流式输出 |
-| `gateway` | `8000` | 无 | OpenAI 兼容入口，编排 Prefill -> Decode |
+| `lmcache-server` | 内部 `5555`, `8080` | 无 | 集中式 KV Cache 共享层 |
+| `vllm-prefill` | 内部 `8001` | `0,1,2,3` | 长上下文 Prefill，生产 KV Cache |
+| `vllm-decode` | 内部 `8002` | `4,5,6,7` | Decode 和流式输出 |
+| `gateway` | 宿主机 `8000` | 无 | OpenAI 兼容入口，编排 Prefill -> Decode |
 
 ## 5. 请求链路
 
-1. 客户端请求 `POST /v1/chat/completions` 到 `gateway:8000`。
+1. 客户端带 `Authorization: Bearer ${GATEWAY_API_KEY}` 请求 `POST /v1/chat/completions` 到 `gateway:8000`。
 2. Gateway 复制原始请求，改写为 `max_tokens=1`、`stream=false`，发送给 `vllm-prefill:8001`。
 3. Prefill 节点完成长上下文计算，LMCache 根据配置捕获并共享 KV Cache。
 4. Gateway 将原始请求发送给 `vllm-decode:8002`。
@@ -109,12 +109,17 @@ flowchart LR
 
 ### 6.1 Docker Compose
 
-最终 Compose 文件为 `compose/docker-compose.yml`，包含四个服务：
+Compose 已按能力拆分，避免一个大文件同时承载缓存、推理和网关职责。当前文件职责如下：
 
-- `lmcache-server`
-- `vllm-prefill`
-- `vllm-decode`
-- `gateway`
+| 文件 | 职责 |
+| --- | --- |
+| `compose/docker-compose.yml` | 基础网络定义，不放具体服务 |
+| `compose/docker-compose.lmcache.yml` | `lmcache-server` KV Cache 服务 |
+| `compose/docker-compose.prefill.yml` | `vllm-prefill` Prefill 生产者节点 |
+| `compose/docker-compose.decode.yml` | `vllm-decode` Decode 消费者节点 |
+| `compose/docker-compose.gateway.yml` | `gateway` 统一 OpenAI 兼容入口 |
+
+推荐通过 `ops/pd-stack.sh` 或 `ops/pd-stack.ps1` 组合这些文件，不建议运维人员手写多段 `docker compose -f ...` 命令。
 
 关键参数：
 
@@ -124,21 +129,32 @@ vllm-prefill:
     - CUDA_VISIBLE_DEVICES=0,1,2,3
     - NCCL_P2P_DISABLE=1
     - NCCL_IB_DISABLE=1
+    - NCCL_SHM_DISABLE=0
   command: >
     --tensor-parallel-size 4
+    --enable-prefix-caching
+    --enable-chunked-prefill
+    --api-key ${VLLM_API_KEY:-sk-mvp-change-me}
+    --kv-transfer-config '{"kv_connector":"LMCacheMPConnector","kv_role":"kv_producer",...}'
     --port 8001
 
 vllm-decode:
   environment:
-    - CUDA_VISIBLE_DEVICES=4,5,6,7
+    - CUDA_VISIBLE_DEVICES=0,1,2,3
     - NCCL_P2P_DISABLE=1
     - NCCL_IB_DISABLE=1
+    - NCCL_SHM_DISABLE=0
   command: >
     --tensor-parallel-size 4
+    --enable-prefix-caching
+    --api-key ${VLLM_API_KEY:-sk-mvp-change-me}
+    --kv-transfer-config '{"kv_connector":"LMCacheMPConnector","kv_role":"kv_consumer",...}'
     --port 8002
 ```
 
 `MODEL_PATH`、`MODEL_QUANTIZATION`、`MAX_MODEL_LEN`、`GPU_MEMORY_UTILIZATION` 等参数通过 `compose/.env.example` 暴露。
+
+注意：`deploy.resources.reservations.devices.ids` 负责绑定宿主机物理 GPU；容器内 CUDA 会重新枚举可见设备，因此 Prefill 和 Decode 容器内部都使用 `CUDA_VISIBLE_DEVICES=0,1,2,3`。这可以避免 Decode 容器在仅可见 4 张卡时继续查找内部编号 `4,5,6,7` 而启动失败。
 
 ### 6.2 LMCache 配置
 
@@ -146,12 +162,11 @@ vllm-decode:
 
 ```yaml
 chunk_size: 256
-backend: "gpu"
-local_cpu_percentage: 0.4
-remote_url: "lmcache-server://lmcache-server:65432"
+local_cpu: true
+max_local_cpu_size: 5
 ```
 
-该配置用于验证长前缀 KV Cache 复用。`local_cpu_percentage: 0.4` 对宿主机内存有明显压力，MVP 压测时必须观察 CPU 内存和换页情况。
+该配置用于验证长前缀 KV Cache 复用。`max_local_cpu_size: 5` 是 MVP 默认值，目标机压测时必须观察 CPU 内存、换页和 LMCache 命中率。
 
 ### 6.3 Gateway
 
@@ -165,6 +180,8 @@ Gateway 代码位于 `backend/gateway.py`，镜像资产为：
 ```text
 PREFILL_NODE_URL=http://vllm-prefill:8001/v1/chat/completions
 DECODE_NODE_URL=http://vllm-decode:8002/v1/chat/completions
+UPSTREAM_API_KEY=${VLLM_API_KEY:-sk-mvp-change-me}
+GATEWAY_API_KEY=${GATEWAY_API_KEY:-sk-mvp-change-me}
 ```
 
 Gateway 支持：
@@ -173,6 +190,8 @@ Gateway 支持：
 - `POST /v1/chat/completions`
 - 流式请求透传
 - 非流式 JSON 响应透传
+- Gateway Bearer 认证
+- 内部 vLLM Bearer 认证转发
 - Prefill 失败时降级到 Decode
 - 响应头输出 Prefill 耗时和状态
 
@@ -203,42 +222,73 @@ cp .env.example .env
 编辑 `.env`：
 
 ```bash
-MODEL_PATH=/data/models/DeepSeek-V4-Flash-AWQ
+MODEL_PATH=/data/temp/yhb/DeepSeek-V4-Flash
 MODEL_QUANTIZATION=awq
 MAX_MODEL_LEN=32768
-GPU_MEMORY_UTILIZATION=0.85
+GPU_MEMORY_UTILIZATION=0.80
 ```
+
+MVP 加固版默认值为 `GPU_MEMORY_UTILIZATION=0.80`。如果目标模型加载失败或显存余量充足，再根据压测结果调整。
 
 启动：
 
 ```bash
-docker compose up -d --build
+bash ../ops/pd-stack.sh up
 ```
 
 检查服务：
 
 ```bash
-docker compose ps
-docker compose logs -f lmcache-server
-docker compose logs -f vllm-prefill
-docker compose logs -f vllm-decode
-docker compose logs -f gateway
+bash ../ops/pd-stack.sh ps
+bash ../ops/pd-stack.sh logs cache
+bash ../ops/pd-stack.sh logs prefill
+bash ../ops/pd-stack.sh logs decode
+bash ../ops/pd-stack.sh logs gateway
 ```
 
 检查 Gateway：
 
 ```bash
-curl http://localhost:8000/healthz
+bash ../ops/pd-stack.sh health
+```
+
+调用推理接口时需要带 gateway API key：
+
+```bash
+curl http://localhost:8000/v1/chat/completions \
+  -H "Authorization: Bearer ${GATEWAY_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"/model","messages":[{"role":"user","content":"hello"}],"max_tokens":16}'
 ```
 
 运行 MVP 验证：
 
 ```bash
 cd ..
-python backend/tests/test_verification.py
+bash ops/pd-stack.sh verify
 ```
 
 如果在服务器上从仓库根目录执行验证脚本，保持默认 `API_URL=http://localhost:8000/v1/chat/completions` 即可。
+
+常用运维命令：
+
+```bash
+bash ops/pd-stack.sh config
+bash ops/pd-stack.sh up
+bash ops/pd-stack.sh restart decode
+bash ops/pd-stack.sh logs gateway
+bash ops/pd-stack.sh down
+```
+
+PowerShell 环境可使用：
+
+```powershell
+.\ops\pd-stack.ps1 config
+.\ops\pd-stack.ps1 up
+.\ops\pd-stack.ps1 restart decode
+.\ops\pd-stack.ps1 logs gateway
+.\ops\pd-stack.ps1 down
+```
 
 ## 8. 验证指标
 
@@ -247,10 +297,12 @@ python backend/tests/test_verification.py
 | 指标 | 通过标准 |
 | --- | --- |
 | Compose 配置 | `docker compose config` 通过 |
-| GPU 绑定 | Prefill 只看到 GPU 0-3，Decode 只看到 GPU 4-7 |
+| GPU 绑定 | Prefill 物理绑定 GPU 0-3，Decode 物理绑定 GPU 4-7；两个容器内均使用 CUDA 编号 0-3 |
 | vLLM 启动 | 两个节点均完成模型加载，没有 OOM |
 | NCCL 稳定性 | 无 NCCL P2P 或 IB 相关卡死 |
 | Gateway 健康检查 | `GET /healthz` 返回 `status=ok` |
+| Gateway 认证 | 无 Bearer token 的推理请求返回 401 |
+| 端口暴露面 | 宿主机只暴露 gateway `8000`，不暴露 `8001`、`8002`、`5555` |
 | OpenAI 兼容 | `POST /v1/chat/completions` 能返回流式结果 |
 | Prefill 观测 | 响应头包含 `x-prefill-status` 和 `x-prefill-ms` |
 | Cache 复用 | 重复长前缀请求 TTFT 低于冷请求 |
@@ -317,15 +369,15 @@ python backend/tests/test_verification.py
 - 当前方案验证的是单机多 vLLM 节点，不是跨物理机分布式集群。
 - Gateway 的 Prefill 编排是 MVP 实现，不等同于 vLLM 原生生产级 PD disaggregation 调度器。
 - LMCache 是否命中取决于版本兼容、请求前缀一致性、缓存配置和 vLLM 集成行为。
-- `latest` 镜像适合 MVP，不适合作为生产可复现版本。
+- 当前 `.env.example` 仍允许 `latest` 镜像用于快速 MVP，不适合作为生产可复现版本。
 - DeepSeek-V3/R1 全量模型通常不适合直接以 8 张 24GB 4090 承载，MVP 应优先使用可在 TP=4 下加载的量化版或蒸馏版。
-- `local_cpu_percentage: 0.4` 可能导致宿主机内存压力，需要在压测中调整。
+- LMCache 本地 CPU 缓存大小需要基于宿主机内存和命中率压测调整。
 
 ## 11. 生产化前必须补齐
 
 - 固定 vLLM、LMCache、CUDA、Python 依赖和模型版本。
-- 增加服务健康检查和启动顺序等待。
-- 增加认证、限流、请求体大小限制和审计日志。
+- 服务健康检查、启动顺序等待和基础认证已进入 MVP 配置；生产前仍需目标机验证并接入告警。
+- 增加限流、请求体大小限制和审计日志。
 - 增加 Prometheus 指标：TTFT、tokens/s、Prefill 耗时、Decode 耗时、LMCache 命中率。
 - 增加自动化压测脚本，覆盖冷请求、热前缀请求、32K 长上下文、并发短请求和混合流量。
 - 明确 Prefill 失败时的降级策略：直接 Decode、返回错误、或按业务优先级排队。
