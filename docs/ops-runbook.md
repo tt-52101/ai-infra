@@ -18,6 +18,8 @@ Compose 按能力拆分：
 | --- | --- |
 | `ops/pd-stack.sh` | Linux / Bash |
 | `ops/pd-stack.ps1` | Windows / PowerShell |
+| `ops/pd-remote.sh` | 本机无 Docker，通过 SSH 调用目标 Linux 服务器 |
+| `ops/pd-remote.ps1` | Windows 本机无 Docker，通过 SSH 调用目标 Linux 服务器 |
 
 ## 2. 初始化
 
@@ -81,6 +83,35 @@ PowerShell:
 .\ops\pd-stack.ps1 verify
 .\ops\pd-stack.ps1 down
 ```
+
+本机没有 Docker 时，不要在本机执行 `pd-stack.*`。通过 SSH 调用目标服务器：
+
+Linux / Git Bash:
+
+```bash
+export PD_REMOTE=root@117.190.94.226
+export PD_REMOTE_PORT=24132
+export PD_REMOTE_DIR=/data/temp/txs/ai-infra
+export PD_REMOTE_PASSWORD='<set in shell history-safe way>'
+bash ops/pd-remote.sh doctor
+bash ops/pd-remote.sh repair prefill
+bash ops/pd-remote.sh logs prefill
+```
+
+PowerShell:
+
+```powershell
+$env:PD_REMOTE="root@117.190.94.226"
+$env:PD_REMOTE_PORT="24132"
+$env:PD_REMOTE_DIR="/data/temp/txs/ai-infra"
+$env:PD_REMOTE_PASSWORD="<set outside git-tracked files>"
+.\ops\pd-remote.ps1 doctor
+.\ops\pd-remote.ps1 repair prefill
+.\ops\pd-remote.ps1 logs prefill
+```
+
+远程脚本会先在目标机执行 `docker compose version`，再进入 `${PD_REMOTE_DIR}` 调用 `bash ops/pd-stack.sh ...`。因此 Docker 只需要安装在目标服务器上，本机只需要 `ssh`。`PD_REMOTE_PASSWORD` 只用于本机进程环境，不要写入 Git 跟踪文件。
+如果本机无法解析 `node-2`，把 `PD_REMOTE` 改为目标机 IP，例如 `root@10.2.24.132`，或先配置本机 hosts/DNS。
 
 ## 4. Target 说明
 

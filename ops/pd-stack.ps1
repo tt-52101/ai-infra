@@ -74,6 +74,17 @@ function Get-Services([string]$Name) {
     }
 }
 
+function Get-Containers([string]$Name) {
+    switch ($Name) {
+        "all" { return @("lmcache-server", "vllm-prefill-cluster", "vllm-decode-cluster", "deepseek-pd-gateway") }
+        "cache" { return @("lmcache-server") }
+        "lmcache" { return @("lmcache-server") }
+        "prefill" { return @("vllm-prefill-cluster") }
+        "decode" { return @("vllm-decode-cluster") }
+        "gateway" { return @("deepseek-pd-gateway") }
+    }
+}
+
 function Invoke-Compose([string[]]$Args) {
     & docker compose @Args
 }
@@ -153,6 +164,7 @@ if ($Target -notin @("all", "cache", "lmcache", "prefill", "decode", "gateway"))
 
 $ComposeArgs = Get-ComposeArgs
 $Services = Get-Services $Target
+$Containers = Get-Containers $Target
 
 switch ($Command) {
     "config" {
@@ -190,6 +202,7 @@ switch ($Command) {
     }
     "repair" {
         Invoke-Doctor @()
+        & docker rm -f $Containers *> $null
         Invoke-Compose ($ComposeArgs + @("up", "-d", "--build", "--force-recreate", "--remove-orphans") + $ExtraArgs + $Services)
         Invoke-Compose ($ComposeArgs + @("ps") + $Services)
     }

@@ -1,7 +1,7 @@
 services:
   # Prefill 节点：绑定宿主机 GPU 0-3，负责长上下文 prefill 和 KV Cache 生产
   vllm-prefill:
-    image: ${VLLM_IMAGE:-lmcache/vllm-openai:v0.4.5-cu129}
+    image: ${VLLM_IMAGE:-lmcache/vllm-openai:latest}
     container_name: vllm-prefill-cluster
     network_mode: host
     environment:

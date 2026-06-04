@@ -133,6 +133,18 @@ services_for_target() {
   esac
 }
 
+containers_for_target() {
+  local target="${1:-all}"
+  case "${target}" in
+    all) echo "lmcache-server vllm-prefill-cluster vllm-decode-cluster deepseek-pd-gateway" ;;
+    cache|lmcache) echo "lmcache-server" ;;
+    prefill) echo "vllm-prefill-cluster" ;;
+    decode) echo "vllm-decode-cluster" ;;
+    gateway) echo "deepseek-pd-gateway" ;;
+    *) echo "Unknown target: ${target}" >&2; exit 2 ;;
+  esac
+}
+
 command="${1:-}"
 
 if [[ -z "${command}" || "${command}" == "-h" || "${command}" == "--help" ]]; then
@@ -193,6 +205,8 @@ case "${command}" in
   repair)
     doctor
     read -r -a services <<<"$(services_for_target "${target}")"
+    read -r -a containers <<<"$(containers_for_target "${target}")"
+    docker rm -f "${containers[@]}" >/dev/null 2>&1 || true
     dc up -d --build --force-recreate --remove-orphans "${extra_args[@]}" "${services[@]}"
     dc ps "${services[@]}"
     ;;

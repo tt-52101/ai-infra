@@ -1,7 +1,7 @@
 services:
   # Decode 节点：绑定宿主机 GPU 4-7，负责高并发流式输出和 KV Cache 消费
   vllm-decode:
-    image: ${VLLM_IMAGE:-lmcache/vllm-openai:v0.4.5-cu129}
+    image: ${VLLM_IMAGE:-lmcache/vllm-openai:latest}
     container_name: vllm-decode-cluster
     network_mode: host
     environment:

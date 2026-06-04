@@ -10,6 +10,8 @@ COMPOSE_PREFILL = ROOT / "compose" / "docker-compose.prefill.yml"
 COMPOSE_DECODE = ROOT / "compose" / "docker-compose.decode.yml"
 COMPOSE_GATEWAY = ROOT / "compose" / "docker-compose.gateway.yml"
 LMCACHE_CONFIG = ROOT / "compose" / "lmcache_config.yaml"
+LMCACHE_DOCKERFILE = ROOT / "compose" / "lmcache.Dockerfile"
+ENV_EXAMPLE = ROOT / "compose" / ".env.example"
 GATEWAY_DOCKERFILE = ROOT / "backend" / "Dockerfile"
 GATEWAY = ROOT / "backend" / "gateway.py"
 GATEWAY_REQUIREMENTS = ROOT / "backend" / "requirements.txt"
@@ -19,6 +21,8 @@ AUDIT_RESPONSE = ROOT / "docs" / "audits" / "AUDIT_RESPONSE.md"
 THIRD_PARTY_RESPONSE = ROOT / "docs" / "audits" / "mvp-pd-separation-design_三方质疑回复.md"
 OPS_SH = ROOT / "ops" / "pd-stack.sh"
 OPS_PS1 = ROOT / "ops" / "pd-stack.ps1"
+OPS_REMOTE_SH = ROOT / "ops" / "pd-remote.sh"
+OPS_REMOTE_PS1 = ROOT / "ops" / "pd-remote.ps1"
 
 COMPOSE_FILES = [
     COMPOSE,
@@ -139,7 +143,10 @@ class MvpPdAssetsTest(unittest.TestCase):
         self.assertNotIn("expose:", lmcache)
         self.assertIn("${LMCACHE_MP_PORT:-6555}", lmcache)
         self.assertIn("${LMCACHE_HTTP_PORT:-8080}", lmcache)
-        self.assertIn("${LMCACHE_IMAGE:-lmcache/standalone:v0.4.5-cu129}", lmcache)
+        self.assertIn("${LMCACHE_IMAGE:-deepseek-lmcache-standalone:local}", lmcache)
+        self.assertIn("build:", lmcache)
+        self.assertIn("dockerfile: lmcache.Dockerfile", lmcache)
+        self.assertIn("LMCACHE_BASE_IMAGE: ${LMCACHE_BASE_IMAGE:-lmcache/standalone:v0.4.5-cu129}", lmcache)
         self.assertNotIn("lmcache/lmcache-server", lmcache)
         self.assertIn("/opt/venv/bin/lmcache", lmcache)
         self.assertIn("server", lmcache)
@@ -200,6 +207,9 @@ class MvpPdAssetsTest(unittest.TestCase):
             self.assertIn("repair", script)
             self.assertIn("--force-recreate", script)
             self.assertIn("--remove-orphans", script)
+            self.assertIn("docker rm -f", script)
+            self.assertIn("lmcache-server", script)
+            self.assertIn("vllm-prefill-cluster", script)
             self.assertIn("latest-nightly", script)
             self.assertIn("--model /model", script)
             self.assertIn("--disable-custom-all-reduce", script)
@@ -207,10 +217,65 @@ class MvpPdAssetsTest(unittest.TestCase):
             self.assertIn("NCCL_CUMEM_HOST_ENABLE", script)
             self.assertIn("VLLM_WORKER_MULTIPROC_METHOD", script)
             self.assertIn("lmcache/vllm-openai:v0.4.5-cu129", script)
+            self.assertIn("deepseek-lmcache-standalone:local", script)
 
         runbook = read(OPS_RUNBOOK)
         self.assertIn("bash ops/pd-stack.sh doctor", runbook)
         self.assertIn("bash ops/pd-stack.sh repair prefill", runbook)
+
+    def test_lmcache_standalone_image_is_patched_for_cli_runtime(self) -> None:
+        dockerfile = read(LMCACHE_DOCKERFILE)
+        lmcache_compose = service_block(compose_text(), "lmcache-server")
+        env_example = read(ENV_EXAMPLE)
+
+        self.assertIn("ARG LMCACHE_BASE_IMAGE=lmcache/standalone:v0.4.5-cu129", dockerfile)
+        self.assertIn("FROM ${LMCACHE_BASE_IMAGE}", dockerfile)
+        self.assertIn("python -m pip install", dockerfile)
+        self.assertIn('"openai>=1,<2"', dockerfile)
+        self.assertIn("--index-url", dockerfile)
+        self.assertIn("--timeout", dockerfile)
+        self.assertIn("--retries", dockerfile)
+
+        self.assertIn("image: ${LMCACHE_IMAGE:-deepseek-lmcache-standalone:local}", lmcache_compose)
+        self.assertIn("build:", lmcache_compose)
+        self.assertIn("context: .", lmcache_compose)
+        self.assertIn("dockerfile: lmcache.Dockerfile", lmcache_compose)
+        self.assertIn("LMCACHE_BASE_IMAGE: ${LMCACHE_BASE_IMAGE:-lmcache/standalone:v0.4.5-cu129}", lmcache_compose)
+        self.assertIn("PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}", lmcache_compose)
+        self.assertIn("PIP_EXTRA_INDEX_URL: ${PIP_EXTRA_INDEX_URL:-}", lmcache_compose)
+        self.assertIn("PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}", lmcache_compose)
+        self.assertIn("PIP_DEFAULT_TIMEOUT: ${PIP_DEFAULT_TIMEOUT:-120}", lmcache_compose)
+        self.assertIn("PIP_RETRIES: ${PIP_RETRIES:-10}", lmcache_compose)
+
+        self.assertIn("VLLM_IMAGE=lmcache/vllm-openai:v0.4.5-cu129", env_example)
+        self.assertIn("LMCACHE_IMAGE=deepseek-lmcache-standalone:local", env_example)
+        self.assertIn("LMCACHE_BASE_IMAGE=lmcache/standalone:v0.4.5-cu129", env_example)
+        self.assertNotIn("latest-nightly", env_example)
+        self.assertNotIn("standalone:nightly", env_example)
+
+    def test_remote_ops_scripts_verify_target_over_ssh(self) -> None:
+        shell_script = read(OPS_REMOTE_SH)
+        powershell_script = read(OPS_REMOTE_PS1)
+
+        for script in (shell_script, powershell_script):
+            self.assertIn("PD_REMOTE", script)
+            self.assertIn("PD_REMOTE_DIR", script)
+            self.assertIn("PD_REMOTE_PORT", script)
+            self.assertIn("PD_REMOTE_PASSWORD", script)
+            self.assertIn("ssh", script)
+            self.assertIn("-p", script)
+            self.assertIn("docker compose version", script)
+            self.assertIn("bash ops/pd-stack.sh doctor", script)
+            self.assertIn("bash ops/pd-stack.sh repair prefill", script)
+            self.assertIn("bash ops/pd-stack.sh logs prefill", script)
+            self.assertIn("exec", script)
+
+        runbook = read(OPS_RUNBOOK)
+        self.assertIn("PD_REMOTE=root@117.190.94.226", runbook)
+        self.assertIn("PD_REMOTE_PORT=24132", runbook)
+        self.assertIn("PD_REMOTE_PASSWORD", runbook)
+        self.assertIn("bash ops/pd-remote.sh doctor", runbook)
+        self.assertIn(".\\ops\\pd-remote.ps1 doctor", runbook)
 
     def test_lmcache_shared_backend_contract(self) -> None:
         config = read(LMCACHE_CONFIG)

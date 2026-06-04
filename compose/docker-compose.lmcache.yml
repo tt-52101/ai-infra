@@ -1,7 +1,7 @@
 services:
   # LMCache Standalone：内部 KV Cache 共享层，不对宿主机暴露端口
   lmcache-server:
-    image: ${LMCACHE_IMAGE:-lmcache/standalone:v0.4.5-cu129}
+    image: ${LMCACHE_IMAGE:-lmcache/standalone:nightly}
     container_name: lmcache-server
     network_mode: host
     environment:
