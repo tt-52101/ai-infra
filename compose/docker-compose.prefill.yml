@@ -10,6 +10,10 @@ services:
       - NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-1}
       - NCCL_SHM_DISABLE=${NCCL_SHM_DISABLE:-0}
       - NCCL_DEBUG=${NCCL_DEBUG:-WARN}
+      - NCCL_CUMEM_ENABLE=${NCCL_CUMEM_ENABLE:-0}
+      - NCCL_CUMEM_HOST_ENABLE=${NCCL_CUMEM_HOST_ENABLE:-0}
+      - VLLM_WORKER_MULTIPROC_METHOD=${VLLM_WORKER_MULTIPROC_METHOD:-spawn}
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
       - LMCACHE_CONFIG_FILE=/vllm-workspace/lmcache_config.yaml
     volumes:
       - ${MODEL_PATH:-/data/temp/yhb/DeepSeek-V4-Flash}:/model:ro

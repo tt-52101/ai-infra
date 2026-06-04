@@ -83,11 +83,24 @@ check_rendered_config() {
     fi
   }
 
+  require_pattern() {
+    local pattern="$1"
+    local description="$2"
+    if ! grep -Eq "${pattern}" <<<"${rendered}"; then
+      echo "ERROR: rendered Compose missing required setting: ${description}" >&2
+      failed=1
+    fi
+  }
+
   require_present "lmcache/vllm-openai:v0.4.5-cu129"
   require_present "lmcache/standalone:v0.4.5-cu129"
   require_present "/model"
   require_present "--disable-custom-all-reduce"
   require_present "NCCL_DEBUG"
+  require_pattern "NCCL_CUMEM_ENABLE(:[[:space:]]*\"?0\"?|=0)" "NCCL_CUMEM_ENABLE=0"
+  require_pattern "NCCL_CUMEM_HOST_ENABLE(:[[:space:]]*\"?0\"?|=0)" "NCCL_CUMEM_HOST_ENABLE=0"
+  require_pattern "VLLM_WORKER_MULTIPROC_METHOD(:[[:space:]]*\"?spawn\"?|=spawn)" "VLLM_WORKER_MULTIPROC_METHOD=spawn"
+  require_pattern "OMP_NUM_THREADS(:[[:space:]]*\"?1\"?|=1)" "OMP_NUM_THREADS=1"
 
   require_absent "latest-nightly"
   require_absent "standalone:nightly"
@@ -99,7 +112,7 @@ check_rendered_config() {
     return 1
   fi
 
-  echo "OK: rendered Compose uses fixed LMCache/vLLM images, positional /model, disabled custom all-reduce, and NCCL_DEBUG."
+  echo "OK: rendered Compose uses fixed images, positional /model, disabled custom all-reduce, NCCL cuMem guards, spawn workers, and NCCL_DEBUG."
 }
 
 doctor() {

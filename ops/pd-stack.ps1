@@ -86,7 +86,11 @@ function Test-RenderedConfig([string]$RenderedConfig) {
         "lmcache/standalone:v0.4.5-cu129",
         "/model",
         "--disable-custom-all-reduce",
-        "NCCL_DEBUG"
+        "NCCL_DEBUG",
+        "NCCL_CUMEM_ENABLE",
+        "NCCL_CUMEM_HOST_ENABLE",
+        "VLLM_WORKER_MULTIPROC_METHOD",
+        "OMP_NUM_THREADS"
     )
     foreach ($needle in $required) {
         if (-not $RenderedConfig.Contains($needle)) {
@@ -108,11 +112,24 @@ function Test-RenderedConfig([string]$RenderedConfig) {
         }
     }
 
+    $requiredPatterns = @{
+        "NCCL_CUMEM_ENABLE=0" = 'NCCL_CUMEM_ENABLE(:\s*"?0"?|=0)'
+        "NCCL_CUMEM_HOST_ENABLE=0" = 'NCCL_CUMEM_HOST_ENABLE(:\s*"?0"?|=0)'
+        "VLLM_WORKER_MULTIPROC_METHOD=spawn" = 'VLLM_WORKER_MULTIPROC_METHOD(:\s*"?spawn"?|=spawn)'
+        "OMP_NUM_THREADS=1" = 'OMP_NUM_THREADS(:\s*"?1"?|=1)'
+    }
+    foreach ($description in $requiredPatterns.Keys) {
+        if ($RenderedConfig -notmatch $requiredPatterns[$description]) {
+            Write-Host "ERROR: rendered Compose missing required setting: $description" -ForegroundColor Red
+            $failed = $true
+        }
+    }
+
     if ($failed) {
         throw "Rendered Compose is stale; fix compose/.env or pull latest repo files before starting containers."
     }
 
-    Write-Host "OK: rendered Compose uses fixed LMCache/vLLM images, positional /model, disabled custom all-reduce, and NCCL_DEBUG."
+    Write-Host "OK: rendered Compose uses fixed images, positional /model, disabled custom all-reduce, NCCL cuMem guards, spawn workers, and NCCL_DEBUG."
 }
 
 function Invoke-Doctor([string[]]$Args) {
