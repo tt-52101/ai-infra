@@ -32,8 +32,8 @@ cp compose/.env.example compose/.env
 
 ```bash
 MODEL_PATH=/data/temp/yhb/DeepSeek-V4-Flash
-VLLM_IMAGE=lmcache/vllm-openai:v0.4.5-cu129
-LMCACHE_IMAGE=lmcache/standalone:v0.4.5-cu129
+VLLM_IMAGE=lmcache/vllm-openai:nightly
+LMCACHE_IMAGE=lmcache/standalone:latest
 LMCACHE_MP_PORT=6555
 VLLM_API_KEY=sk-change-123
 GATEWAY_API_KEY=sk-change-123
