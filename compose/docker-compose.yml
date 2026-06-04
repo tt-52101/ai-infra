@@ -1,5 +1,3 @@
-version: '3.8'
-
 # Base Compose file.
 # Do not add services here; keep deployable capabilities in:
 # - docker-compose.lmcache.yml

@@ -60,6 +60,12 @@ class MvpPdAssetsTest(unittest.TestCase):
         self.assertIn("vllm-decode:", read(COMPOSE_DECODE))
         self.assertIn("gateway:", read(COMPOSE_GATEWAY))
 
+    def test_compose_uses_current_schema(self) -> None:
+        for path in COMPOSE_FILES:
+            content = read(path)
+            self.assertNotRegex(content, r"(?m)^version:")
+            self.assertNotRegex(content, r"(?m)^\s+ids:")
+
     def test_compose_declares_pd_topology_and_gateway(self) -> None:
         compose = compose_text()
 
@@ -73,12 +79,12 @@ class MvpPdAssetsTest(unittest.TestCase):
         gateway = service_block(compose, "gateway")
 
         self.assertIn("CUDA_VISIBLE_DEVICES=0,1,2,3", prefill)
-        self.assertIn("ids: ['0', '1', '2', '3']", prefill)
+        self.assertIn("device_ids: ['0', '1', '2', '3']", prefill)
         self.assertIn("--tensor-parallel-size 4", prefill)
         self.assertIn("--port 8001", prefill)
 
         self.assertIn("CUDA_VISIBLE_DEVICES=0,1,2,3", decode)
-        self.assertIn("ids: ['4', '5', '6', '7']", decode)
+        self.assertIn("device_ids: ['4', '5', '6', '7']", decode)
         self.assertIn("--tensor-parallel-size 4", decode)
         self.assertIn("--port 8002", decode)
 
@@ -111,18 +117,31 @@ class MvpPdAssetsTest(unittest.TestCase):
 
         self.assertNotIn("ports:", lmcache)
         self.assertIn("expose:", lmcache)
-        self.assertIn('"5555"', lmcache)
-        self.assertIn('"8080"', lmcache)
+        self.assertIn("${LMCACHE_MP_PORT:-6555}", lmcache)
+        self.assertIn("${LMCACHE_HTTP_PORT:-8080}", lmcache)
+        self.assertIn("${LMCACHE_IMAGE:-lmcache/standalone:nightly}", lmcache)
+        self.assertNotIn("lmcache/lmcache-server", lmcache)
+        self.assertIn("/opt/venv/bin/lmcache", lmcache)
+        self.assertIn("server", lmcache)
+        self.assertIn("--l1-size-gb", lmcache)
+        self.assertIn("${LMCACHE_L1_SIZE_GB:-60}", lmcache)
+        self.assertIn("--eviction-policy", lmcache)
+        self.assertIn("--max-workers", lmcache)
+        self.assertIn("${LMCACHE_MAX_WORKERS:-4}", lmcache)
+        self.assertIn("/healthcheck", lmcache)
 
         for block in (prefill, decode):
             self.assertNotIn("ports:", block)
             self.assertIn("expose:", block)
+            self.assertIn("${VLLM_IMAGE:-lmcache/vllm-openai:latest-nightly}", block)
             self.assertIn("--api-key", block)
             self.assertIn("${VLLM_API_KEY:-sk-mvp-change-me}", block)
             self.assertIn("--enable-prefix-caching", block)
             self.assertIn("--kv-transfer-config", block)
             self.assertIn("LMCacheMPConnector", block)
             self.assertIn("lmcache.integration.vllm.lmcache_mp_connector", block)
+            self.assertIn('"lmcache.mp.host":"tcp://lmcache-server"', block)
+            self.assertIn('"lmcache.mp.port":${LMCACHE_MP_PORT:-6555}', block)
             self.assertIn("logging:", block)
             self.assertIn('max-size: "50m"', block)
 

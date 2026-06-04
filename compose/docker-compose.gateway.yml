@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # OpenAI 兼容统一入口：唯一对宿主机暴露的服务
   gateway:

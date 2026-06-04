@@ -16,7 +16,7 @@
 
 | 质疑点 | 回复 | 当前处理 |
 | --- | --- | --- |
-| Decode 同时使用宿主机 GPU `ids: ['4','5','6','7']` 和 `CUDA_VISIBLE_DEVICES=4,5,6,7` 可能导致容器内编号冲突 | 采纳。物理 GPU 由 Docker/NVIDIA runtime 负责隔离后，容器内应使用可见设备的本地编号。 | Decode 已改为 `CUDA_VISIBLE_DEVICES=0,1,2,3`，同时保留 `ids: ['4','5','6','7']` 做宿主机物理卡绑定。 |
+| Decode 同时使用宿主机 GPU `device_ids: ['4','5','6','7']` 和 `CUDA_VISIBLE_DEVICES=4,5,6,7` 可能导致容器内编号冲突 | 采纳。物理 GPU 由 Docker/NVIDIA runtime 负责隔离后，容器内应使用可见设备的本地编号。 | Decode 已改为 `CUDA_VISIBLE_DEVICES=0,1,2,3`，同时保留 `device_ids: ['4','5','6','7']` 做宿主机物理卡绑定。 |
 | Prefill/Decode 不是两个普通 vLLM 节点即可天然完成原生 PD | 采纳其风险判断。当前设计已经通过 `--kv-transfer-config` 声明 `kv_producer` / `kv_consumer`，不是只靠两个普通节点。 | 保留 `LMCacheMPConnector`，并在文档中强调这是 MVP 级 PD 验证，不等同于完整生产 Router。 |
 | Prefill 节点应使用 Chunked Prefill 抑制长上下文峰值 | 采纳。长上下文场景下，Prefill 节点更适合先启用分块来降低峰值压力。 | Prefill 增加 `--enable-chunked-prefill`。 |
 | `depends_on` 只保证启动顺序，不保证就绪 | 已采纳。当前 Compose 已使用 `condition: service_healthy`。 | 维持四个服务的 healthcheck 与健康依赖。 |
@@ -38,13 +38,13 @@
 
 ### 3.2 不把 `remote_url: "lmcache://lmcache-server:65432"` 写回当前配置
 
-当前实现采用 `LMCacheMPConnector` 和 `--kv-transfer-config`。在这个方案下，vLLM 通过 connector extra config 指向 `tcp://lmcache-server:5555`，而不是通过旧式 `remote_url` 字段表达远程缓存。
+当前实现采用 `LMCacheMPConnector` 和 `--kv-transfer-config`。在这个方案下，vLLM 通过 connector extra config 指向 `tcp://lmcache-server:${LMCACHE_MP_PORT:-6555}`，而不是通过旧式 `remote_url` 字段表达远程缓存。
 
 因此不采纳评审样例中的 `remote_url` 配置，避免同一个 MVP 同时存在两套 LMCache 接入模型。
 
 ### 3.3 不直接固定到评审样例中的镜像版本
 
-评审建议 `lmcache/lmcache-server:v0.1.4` 和 `vllm/vllm-openai:v0.7.0`。固定版本方向正确，但具体版本必须在目标 GPU 服务器上验证：
+评审早期建议过 `lmcache/lmcache-server` 方向，但目标环境已经验证 Docker Hub 不存在该镜像发布。当前实现改为 `lmcache/standalone`，vLLM 侧使用 `lmcache/vllm-openai`，固定版本方向仍然正确，但具体 tag 或 digest 必须在目标 GPU 服务器上验证：
 
 - 是否包含 `LMCacheMPConnector`。
 - 是否支持当前 `--kv-transfer-config` 字段。
@@ -65,7 +65,7 @@ deploy:
     reservations:
       devices:
         - driver: nvidia
-          ids: ['4', '5', '6', '7']
+          device_ids: ['4', '5', '6', '7']
           capabilities: [gpu]
 environment:
   - CUDA_VISIBLE_DEVICES=0,1,2,3
@@ -111,7 +111,7 @@ Prefill 节点增加：
 3. `vllm-prefill` 只绑定宿主机 GPU 0-3。
 4. `vllm-decode` 只绑定宿主机 GPU 4-7，但容器内 CUDA 编号为 0-3。
 5. 无认证访问 gateway 推理接口返回 401。
-6. 宿主机不能直接访问 `8001`、`8002`、`5555`。
+6. 宿主机不能直接访问 `8001`、`8002`、`6555`。
 7. 长上下文重复请求 TTFT 有下降。
 8. Prefill 高负载期间 Decode 流式输出没有明显长停顿。
 

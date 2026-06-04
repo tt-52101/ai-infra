@@ -30,6 +30,9 @@ cp compose/.env.example compose/.env
 
 ```bash
 MODEL_PATH=/data/temp/yhb/DeepSeek-V4-Flash
+VLLM_IMAGE=lmcache/vllm-openai:latest-nightly
+LMCACHE_IMAGE=lmcache/standalone:nightly
+LMCACHE_MP_PORT=6555
 VLLM_API_KEY=sk-change-123
 GATEWAY_API_KEY=sk-change-123
 ```
@@ -105,6 +108,7 @@ bash ops/pd-stack.sh verify
 | --- | --- |
 | `vllm-prefill` 启动失败 | `MODEL_PATH`、GPU 0-3 可见性、模型是否支持 TP=4 |
 | `vllm-decode` 启动失败 | GPU 4-7 物理绑定、容器内 CUDA 编号是否为 0-3 |
+| `lmcache/lmcache-server` 拉取失败 | 当前不再使用该历史仓库镜像，确认 `LMCACHE_IMAGE=lmcache/standalone:nightly` 或目标机验证过的 standalone tag |
 | gateway 返回 401 | `GATEWAY_API_KEY` 是否与请求 Bearer token 一致 |
 | gateway 返回 prefill failed | `vllm-prefill` 日志、LMCache 健康检查、`UPSTREAM_API_KEY` |
 | TTFT 没有下降 | LMCache 日志、长前缀是否完全一致、KV connector 版本兼容性 |

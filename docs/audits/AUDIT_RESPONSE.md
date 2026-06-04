@@ -39,7 +39,7 @@
 | --- | --- | --- |
 | 固定镜像版本 | 部分采纳 | 当前已参数化 `VLLM_IMAGE` 和 `LMCACHE_IMAGE`，但不在本机虚构版本号。目标 GPU 服务器完成首次成功部署后，应把实际可用 tag 或 digest 固化。 |
 | 健康检查依赖 `/health` | 部分采纳 | vLLM OpenAI server 通常提供 `/health`，但不同镜像版本可能有差异。目标机需用 `docker compose ps` 和日志确认。 |
-| LMCache Server 健康检查 | 部分采纳 | 当前用 TCP 连接检查 `5555`，可验证监听状态，但不能证明 KV Cache 命中质量。后续应接入 LMCache 指标。 |
+| LMCache Standalone 健康检查 | 部分采纳 | 当前通过 HTTP `/healthcheck` 检查 standalone 服务就绪，并保留指标接入作为后续生产化优化。 |
 | 资源 limits | 部分采纳 | Compose 中硬设 CPU/memory limit 可能误伤 8 卡推理启动。建议先完成 MVP 压测，再根据实测显存、CPU 内存和 KV Cache 占用设置硬限制。 |
 | TLS / Nginx / Traefik | 部分采纳 | 单机 MVP 可先只暴露 gateway；生产环境再由反向代理统一做 TLS、限流和审计。 |
 
@@ -76,7 +76,7 @@ flowchart LR
     client["Client"] --> gateway["gateway :8000<br/>Bearer auth"]
     gateway --> prefill["vllm-prefill :8001 internal<br/>GPU 0-3, TP=4, kv_producer"]
     gateway --> decode["vllm-decode :8002 internal<br/>GPU 4-7, TP=4, kv_consumer"]
-    prefill --> lmcache["lmcache-server :5555 internal<br/>KV Cache MP server"]
+    prefill --> lmcache["lmcache-server :6555 internal<br/>LMCache Standalone"]
     lmcache --> decode
 ```
 
@@ -87,7 +87,7 @@ flowchart LR
 | `gateway` | `8000` | `8000` |
 | `vllm-prefill` | 不暴露 | `8001` |
 | `vllm-decode` | 不暴露 | `8002` |
-| `lmcache-server` | 不暴露 | `5555`, `8080` |
+| `lmcache-server` | 不暴露 | `6555`, `8080` |
 
 ## 6. 优化路线
 

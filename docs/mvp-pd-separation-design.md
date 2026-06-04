@@ -75,7 +75,7 @@ MVP 需要验证的不是“绝对不卡顿”，而是在相同并发压力下�
 flowchart LR
     client["Client / OpenAI SDK<br/>Bearer auth"] --> gateway["gateway :8000"]
     gateway --> prefill["vllm-prefill :8001 internal<br/>GPU 0-3, TP=4, kv_producer"]
-    prefill --> lmcache["lmcache-server :5555 internal<br/>shared KV Cache"]
+    prefill --> lmcache["lmcache-server :6555 internal<br/>shared KV Cache"]
     gateway --> decode["vllm-decode :8002 internal<br/>GPU 4-7, TP=4, kv_consumer"]
     lmcache --> decode
 ```
@@ -84,7 +84,7 @@ flowchart LR
 
 | 组件 | 端口 | GPU | 职责 |
 | --- | --- | --- | --- |
-| `lmcache-server` | 内部 `5555`, `8080` | 无 | 集中式 KV Cache 共享层 |
+| `lmcache-server` | 内部 `6555`, `8080` | 无 | LMCache Standalone 共享 KV Cache 层 |
 | `vllm-prefill` | 内部 `8001` | `0,1,2,3` | 长上下文 Prefill，生产 KV Cache |
 | `vllm-decode` | 内部 `8002` | `4,5,6,7` | Decode 和流式输出 |
 | `gateway` | 宿主机 `8000` | 无 | OpenAI 兼容入口，编排 Prefill -> Decode |
@@ -154,7 +154,7 @@ vllm-decode:
 
 `MODEL_PATH`、`MODEL_QUANTIZATION`、`MAX_MODEL_LEN`、`GPU_MEMORY_UTILIZATION` 等参数通过 `compose/.env.example` 暴露。
 
-注意：`deploy.resources.reservations.devices.ids` 负责绑定宿主机物理 GPU；容器内 CUDA 会重新枚举可见设备，因此 Prefill 和 Decode 容器内部都使用 `CUDA_VISIBLE_DEVICES=0,1,2,3`。这可以避免 Decode 容器在仅可见 4 张卡时继续查找内部编号 `4,5,6,7` 而启动失败。
+注意：`deploy.resources.reservations.devices.device_ids` 负责绑定宿主机物理 GPU；容器内 CUDA 会重新枚举可见设备，因此 Prefill 和 Decode 容器内部都使用 `CUDA_VISIBLE_DEVICES=0,1,2,3`。这可以避免 Decode 容器在仅可见 4 张卡时继续查找内部编号 `4,5,6,7` 而启动失败。
 
 ### 6.2 LMCache 配置
 
@@ -302,7 +302,7 @@ PowerShell 环境可使用：
 | NCCL 稳定性 | 无 NCCL P2P 或 IB 相关卡死 |
 | Gateway 健康检查 | `GET /healthz` 返回 `status=ok` |
 | Gateway 认证 | 无 Bearer token 的推理请求返回 401 |
-| 端口暴露面 | 宿主机只暴露 gateway `8000`，不暴露 `8001`、`8002`、`5555` |
+| 端口暴露面 | 宿主机只暴露 gateway `8000`，不暴露 `8001`、`8002`、`6555` |
 | OpenAI 兼容 | `POST /v1/chat/completions` 能返回流式结果 |
 | Prefill 观测 | 响应头包含 `x-prefill-status` 和 `x-prefill-ms` |
 | Cache 复用 | 重复长前缀请求 TTFT 低于冷请求 |
