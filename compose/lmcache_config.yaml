@@ -1,0 +1,5 @@
+chunk_size: 256
+backend: "gpu"
+# 允许各自容器占用 40% 的宿主机系统内存作为 KV Cache 的二级高速缓冲区
+local_cpu_percentage: 0.4
+remote_url: "lmcache-server://lmcache-server:65432"
