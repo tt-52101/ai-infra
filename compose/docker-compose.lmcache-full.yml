@@ -30,7 +30,7 @@ services:
       - OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
       - LMCACHE_CONFIG_FILE=/vllm-workspace/lmcache_config.yaml
     volumes:
-      - ${MODEL_PATH:-/data/temp/yhb/DeepSeek-V4-Flash}:/model:ro
+      - ${MODEL_PATH:-/data/temp/yhb/Qwen3.5-35B-A3B}:/model:ro
       - ./lmcache_config.yaml:/vllm-workspace/lmcache_config.yaml:ro
     ipc: host
     ulimits:
@@ -101,7 +101,7 @@ services:
       - OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
       - LMCACHE_CONFIG_FILE=/vllm-workspace/lmcache_config.yaml
     volumes:
-      - ${MODEL_PATH:-/data/temp/yhb/DeepSeek-V4-Flash}:/model:ro
+      - ${MODEL_PATH:-/data/temp/yhb/Qwen3.5-35B-A3B}:/model:ro
       - ./lmcache_config.yaml:/vllm-workspace/lmcache_config.yaml:ro
     ipc: host
     ulimits:
