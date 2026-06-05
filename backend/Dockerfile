@@ -25,6 +25,6 @@ RUN python -m pip install \
 
 COPY gateway.py .
 
-EXPOSE 8000
+EXPOSE 63012
 
-CMD ["uvicorn", "gateway:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn gateway:app --host 0.0.0.0 --port ${GATEWAY_PORT:-63012}"]

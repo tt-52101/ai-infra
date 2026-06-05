@@ -44,7 +44,7 @@
 
 ### 3.3 不直接固定到评审样例中的镜像版本
 
-评审早期建议过 `lmcache/lmcache-server` 方向，但目标环境已经验证 Docker Hub 不存在该镜像发布。当前实现改为 `lmcache/standalone`，vLLM 侧使用 `lmcache/vllm-openai`。MVP 默认值已经固定为 `lmcache/standalone:v0.4.5-cu129` 与 `lmcache/vllm-openai:v0.4.5-cu129`，不再使用 nightly；生产化时仍必须在目标 GPU 服务器上验证并固定 digest：
+评审早期建议过 `lmcache/lmcache-server` 方向，但目标环境已经验证 Docker Hub 不存在该镜像发布。当前实现改为 `lmcache/standalone`，vLLM 侧使用 `lmcache/vllm-openai`。MVP 默认值已经固定为 `lmcache/standalone:latest` 与 `vllm/vllm-openai:latest`，不再使用 nightly；生产化时仍必须在目标 GPU 服务器上验证并固定 digest：
 
 - 是否包含 `LMCacheMPConnector`。
 - 是否支持当前 `--kv-transfer-config` 字段。

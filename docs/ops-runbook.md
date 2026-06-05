@@ -31,7 +31,7 @@ cp compose/.env.example compose/.env
 编辑 `compose/.env`，至少确认：
 
 ```bash
-MODEL_PATH=/data/temp/yhb/DeepSeek-V4-Flash
+MODEL_PATH=/data/temp/yhb/Qwen3.5-35B-A3B
 VLLM_IMAGE=lmcache/vllm-openai:nightly
 LMCACHE_IMAGE=lmcache/standalone:latest
 LMCACHE_MP_PORT=6555
@@ -159,7 +159,7 @@ bash ops/pd-stack.sh verify
 
 - `config` 能渲染完整 Compose。
 - `ps` 中四个服务处于 running/healthy。
-- 外部只能访问 gateway `8000`。
+- 外部只能访问 gateway `${GATEWAY_PORT:-63012}`。
 - 无 Bearer token 的推理请求返回 401。
 - `verify` 中重复长前缀请求的 TTFT 相比冷请求下降。
 
@@ -169,9 +169,9 @@ bash ops/pd-stack.sh verify
 | --- | --- |
 | `vllm-prefill` 启动失败 | `MODEL_PATH`、GPU 0-3 可见性、模型是否支持 TP=4 |
 | `vllm-decode` 启动失败 | GPU 4-7 物理绑定、容器内 CUDA 编号是否为 0-3 |
-| vLLM 启动后出现 `free(): double free detected` 或 NCCL worker 初始化失败 | 避免使用 nightly 镜像；确认 `VLLM_IMAGE=lmcache/vllm-openai:v0.4.5-cu129`、模型路径使用位置参数 `/model`、Prefill/Decode 均保留 `--disable-custom-all-reduce`、`NCCL_CUMEM_ENABLE=0`、`NCCL_CUMEM_HOST_ENABLE=0`、`VLLM_WORKER_MULTIPROC_METHOD=spawn` 和 `NCCL_DEBUG=WARN`，然后执行 `bash ops/pd-stack.sh repair prefill` |
+| vLLM 启动后出现 `free(): double free detected` 或 NCCL worker 初始化失败 | 避免使用 nightly 镜像；确认 `VLLM_IMAGE=vllm/vllm-openai:latest`、模型路径使用位置参数 `/model`、Prefill/Decode 均保留 `--disable-custom-all-reduce`、`NCCL_CUMEM_ENABLE=0`、`NCCL_CUMEM_HOST_ENABLE=0`、`VLLM_WORKER_MULTIPROC_METHOD=spawn` 和 `NCCL_DEBUG=WARN`，然后执行 `bash ops/pd-stack.sh repair prefill` |
 | 宿主机外部能访问 `8001` / `8002` / `6555` | 检查 vLLM 是否仍有 `--host 127.0.0.1`，LMCache 是否仍有 `--http-host 127.0.0.1` |
-| `lmcache/lmcache-server` 拉取失败 | 当前不再使用该历史仓库镜像，确认 `LMCACHE_IMAGE=lmcache/standalone:v0.4.5-cu129` 或目标机验证过的 standalone tag |
+| `lmcache/lmcache-server` 拉取失败 | 当前不再使用该历史仓库镜像，确认 `LMCACHE_IMAGE=lmcache/standalone:latest` 或目标机验证过的 standalone tag |
 | Gateway 镜像构建时 pip 访问 PyPI 超时 | 在 `compose/.env` 配置 `PIP_INDEX_URL`、`PIP_DEFAULT_TIMEOUT`、`PIP_RETRIES` 后重新执行 `bash ops/pd-stack.sh build gateway` |
 | gateway 返回 401 | `GATEWAY_API_KEY` 是否与请求 Bearer token 一致 |
 | gateway 返回 prefill failed | `vllm-prefill` 日志、LMCache 健康检查、`UPSTREAM_API_KEY` |

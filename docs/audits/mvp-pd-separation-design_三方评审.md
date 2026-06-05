@@ -80,7 +80,7 @@ services:
       - LMCACHE_SERVER_PORT=65432
       - LMCACHE_CONFIG_FILE=/vllm-workspace/lmcache_config.yaml
     volumes:
-      - ${MODEL_PATH:-/data/temp/yhb/DeepSeek-V4-Flash}:/model:ro
+      - ${MODEL_PATH:-/data/temp/yhb/Qwen3.5-35B-A3B}:/model:ro
       - ./lmcache_config.yaml:/vllm-workspace/lmcache_config.yaml
     ipc: host
     ulimits:
@@ -129,7 +129,7 @@ services:
       - LMCACHE_SERVER_PORT=65432
       - LMCACHE_CONFIG_FILE=/vllm-workspace/lmcache_config.yaml
     volumes:
-      - ${MODEL_PATH:-/data/temp/yhb/DeepSeek-V4-Flash}:/model:ro
+      - ${MODEL_PATH:-/data/temp/yhb/Qwen3.5-35B-A3B}:/model:ro
       - ./lmcache_config.yaml:/vllm-workspace/lmcache_config.yaml
     ipc: host
     ulimits:

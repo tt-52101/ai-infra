@@ -13,6 +13,7 @@ PREFILL_NODE_URL = os.getenv("PREFILL_NODE_URL", "http://vllm-prefill:8001/v1/ch
 DECODE_NODE_URL = os.getenv("DECODE_NODE_URL", "http://vllm-decode:8002/v1/chat/completions")
 UPSTREAM_API_KEY = os.getenv("UPSTREAM_API_KEY", "")
 GATEWAY_API_KEY = os.getenv("GATEWAY_API_KEY", "")
+GATEWAY_PORT = int(os.getenv("GATEWAY_PORT", "63012"))
 PREFILL_TIMEOUT_SECONDS = float(os.getenv("PREFILL_TIMEOUT_SECONDS", "300"))
 DECODE_TIMEOUT_SECONDS = float(os.getenv("DECODE_TIMEOUT_SECONDS", "300"))
 PREFILL_MAX_TOKENS = int(os.getenv("PREFILL_MAX_TOKENS", "1"))
@@ -130,7 +131,7 @@ async def dispatch_chat_completions(request: Request) -> Response:
         flush=True,
     )
 
-    async with httpx.AsyncClient(timeout=PREFILL_TIMEOUT_SECONDS) as client:
+    async with httpx.AsyncClient(timeout=PREFILL_TIMEOUT_SECONDS, trust_env=False) as client:
         prefill_status, prefill_ms, prefill_error = await run_prefill(
             client,
             body,
@@ -149,8 +150,21 @@ async def dispatch_chat_completions(request: Request) -> Response:
             headers=response_headers,
         )
 
-    async with httpx.AsyncClient(timeout=DECODE_TIMEOUT_SECONDS) as client:
-        decode_response = await client.post(DECODE_NODE_URL, json=body, headers=headers)
+    try:
+        async with httpx.AsyncClient(timeout=DECODE_TIMEOUT_SECONDS, trust_env=False) as client:
+            decode_response = await client.post(DECODE_NODE_URL, json=body, headers=headers)
+    except httpx.HTTPError as exc:
+        message = str(exc)[:500]
+        response_headers["x-decode-error"] = message
+        print(
+            f"[{request_id}] decode failed error={message}",
+            flush=True,
+        )
+        return JSONResponse(
+            {"error": "decode upstream failed", "detail": message},
+            status_code=502,
+            headers=response_headers,
+        )
 
     content_type = decode_response.headers.get("content-type", "application/json")
     if "application/json" in content_type:
@@ -176,7 +190,7 @@ async def stream_decode(
     started = time.perf_counter()
     chunk_count = 0
     byte_count = 0
-    async with httpx.AsyncClient(timeout=DECODE_TIMEOUT_SECONDS) as client:
+    async with httpx.AsyncClient(timeout=DECODE_TIMEOUT_SECONDS, trust_env=False) as client:
         async with client.stream("POST", DECODE_NODE_URL, json=body, headers=headers) as response:
             print(
                 f"[{request_id}] decode stream connected status={response.status_code}",
@@ -198,4 +212,4 @@ async def stream_decode(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=GATEWAY_PORT)

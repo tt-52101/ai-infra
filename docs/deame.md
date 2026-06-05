@@ -11,7 +11,7 @@
 - `vllm-decode`：绑定 GPU `4,5,6,7`，对外暴露 `8002`，负责 decode 和流式输出。
 - 两个 vLLM 节点均使用 `vllm/vllm-openai:latest`、`--tensor-parallel-size 4`、`--quantization awq`、`--max-model-len 32768`、`--gpu-memory-utilization 0.85`。
 - 两个 vLLM 节点通过同一个 `lmcache-server://lmcache-server:65432` 共享 KV Cache。当前 LMCache 配置为 `chunk_size: 256`、`backend: "gpu"`、`local_cpu_percentage: 0.4`。
-- 最终 Compose 中声明的模型路径是 `/data/temp/yhb/DeepSeek-V4-Flash:/model`。原讨论稿中的 `/data/models/DeepSeek-V3-AWQ` 不是当前定版配置。
+- 最终 Compose 中声明的模型路径是 `/data/temp/yhb/Qwen3.5-35B-A3B:/model`。原讨论稿中的 `/data/models/DeepSeek-V3-AWQ` 不是当前定版配置。
 - `backend/gateway.py` 已实现统一入口 `8000/v1/chat/completions` 的 Prefill 到 Decode 转发逻辑，但该网关当前没有纳入 `compose/docker-compose.yml`。因此，仅运行 Compose 只能启动 LMCache、Prefill 和 Decode 三个服务，不能自动得到统一的 `8000` 网关入口。
 
 ### 2. 对原需求文档方案的事实性反馈
@@ -33,7 +33,7 @@
 MVP 成立的前提条件：
 
 - 宿主机具备 8 张可被 Docker 访问的 NVIDIA GPU，并已安装 NVIDIA 驱动、Docker、Docker Compose 和 NVIDIA Container Toolkit。
-- `/data/temp/yhb/DeepSeek-V4-Flash` 指向真实存在且能在 4 卡 TP 下加载的 AWQ 模型权重。
+- `/data/temp/yhb/Qwen3.5-35B-A3B` 指向真实存在且能在 4 卡 TP 下加载的 AWQ 模型权重。
 - 宿主机具备足够 CPU 内存和 NVMe 存储，能够支撑 `local_cpu_percentage: 0.4` 的二级 KV Cache 与模型加载。
 - 若要验证统一 OpenAI 入口，需要单独运行 `backend/gateway.py`，或把 gateway 增加为 Compose 服务。
 
