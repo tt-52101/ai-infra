@@ -1,11 +1,10 @@
 services:
-  # Prefill 节点：绑定宿主机 GPU 0-3，负责长上下文 prefill 和 KV Cache 生产
-  vllm-prefill:
+  vllm-verify:
     image: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
-    container_name: vllm-prefill-cluster
+    container_name: vllm-lmcache-verify
     network_mode: host
     environment:
-      - CUDA_VISIBLE_DEVICES=0,1,2,3
+      - CUDA_VISIBLE_DEVICES=${VERIFY_GPU_ID:-0}
       - NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
       - NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-1}
       - NCCL_SHM_DISABLE=${NCCL_SHM_DISABLE:-0}
@@ -29,32 +28,30 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['0', '1', '2', '3']
+              device_ids: ['${VERIFY_GPU_ID:-0}']
               capabilities: [gpu]
     command: >
       /model
       --quantization ${MODEL_QUANTIZATION:-awq}
       --dtype ${MODEL_DTYPE:-float16}
-      --tensor-parallel-size 4
+      --tensor-parallel-size 1
       --disable-custom-all-reduce
       --trust-remote-code
       --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION:-0.80}
       --max-model-len ${MAX_MODEL_LEN:-32768}
-      --max-num-seqs ${PREFILL_MAX_NUM_SEQS:-16}
-      --max-num-batched-tokens ${PREFILL_MAX_NUM_BATCHED_TOKENS:-32768}
+      --max-num-seqs ${VERIFY_MAX_NUM_SEQS:-8}
       --enable-prefix-caching
-      --enable-chunked-prefill
       --api-key ${VLLM_API_KEY:-sk-mvp-change-me}
       --kv-transfer-config '{"kv_connector":"LMCacheMPConnector","kv_connector_module_path":"lmcache.integration.vllm.lmcache_mp_connector","kv_role":"kv_producer","kv_connector_extra_config":{"lmcache.mp.port":${LMCACHE_MP_PORT:-6555}}}'
       --host 127.0.0.1
-      --port 8001
+      --port 8003
     depends_on:
       lmcache-server:
         condition: service_healthy
     healthcheck:
       test:
         - CMD-SHELL
-        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=5).read()"
+        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8003/health', timeout=5).read()"
       interval: 30s
       timeout: 10s
       retries: 10

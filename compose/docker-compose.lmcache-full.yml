@@ -1,0 +1,153 @@
+# PD 分离 + LMCache 完整验证场景
+# 包含：lmcache-server → vllm-prefill(kv_producer) → vllm-decode(kv_consumer)
+# 用途：验证 LMCache KV Cache 在 Prefill/Decode 节点间的完整传递链路
+#
+# 启动方式：
+#   docker compose -f docker-compose.yml \
+#     -f docker-compose.lmcache.yml \
+#     -f docker-compose.lmcache-full.yml up -d
+#
+# 验证步骤见下方注释
+
+services:
+  # ============================================================
+  # Prefill 节点（KV Cache 生产者）
+  # 绑定 GPU 0-3，负责接收请求、执行 prefill、将 KV Cache 写入 LMCache
+  # ============================================================
+  vllm-prefill:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
+    container_name: vllm-prefill-full
+    network_mode: host
+    environment:
+      - CUDA_VISIBLE_DEVICES=0,1,2,3
+      - NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
+      - NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-1}
+      - NCCL_SHM_DISABLE=${NCCL_SHM_DISABLE:-0}
+      - NCCL_DEBUG=${NCCL_DEBUG:-WARN}
+      - NCCL_CUMEM_ENABLE=${NCCL_CUMEM_ENABLE:-0}
+      - NCCL_CUMEM_HOST_ENABLE=${NCCL_CUMEM_HOST_ENABLE:-0}
+      - VLLM_WORKER_MULTIPROC_METHOD=${VLLM_WORKER_MULTIPROC_METHOD:-spawn}
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
+      - LMCACHE_CONFIG_FILE=/vllm-workspace/lmcache_config.yaml
+    volumes:
+      - ${MODEL_PATH:-/data/temp/yhb/DeepSeek-V4-Flash}:/model:ro
+      - ./lmcache_config.yaml:/vllm-workspace/lmcache_config.yaml:ro
+    ipc: host
+    ulimits:
+      memlock: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0', '1', '2', '3']
+              capabilities: [gpu]
+    command: >
+      /model
+      --quantization ${MODEL_QUANTIZATION:-awq}
+      --dtype ${MODEL_DTYPE:-float16}
+      --tensor-parallel-size 4
+      --disable-custom-all-reduce
+      --trust-remote-code
+      --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION:-0.80}
+      --max-model-len ${MAX_MODEL_LEN:-32768}
+      --max-num-seqs ${PREFILL_MAX_NUM_SEQS:-16}
+      --max-num-batched-tokens ${PREFILL_MAX_NUM_BATCHED_TOKENS:-32768}
+      --enable-prefix-caching
+      --enable-chunked-prefill
+      --api-key ${VLLM_API_KEY:-sk-mvp-change-me}
+      --kv-transfer-config '{"kv_connector":"LMCacheMPConnector","kv_connector_module_path":"lmcache.integration.vllm.lmcache_mp_connector","kv_role":"kv_producer","kv_connector_extra_config":{"lmcache.mp.port":${LMCACHE_MP_PORT:-6555}}}'
+      --host 127.0.0.1
+      --port 8001
+    depends_on:
+      lmcache-server:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=5).read()"
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 300s
+    stop_grace_period: 120s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ============================================================
+  # Decode 节点（KV Cache 消费者）
+  # 绑定 GPU 4-7，负责从 LMCache 读取 KV Cache 并执行 decode 生成
+  # ============================================================
+  vllm-decode:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
+    container_name: vllm-decode-full
+    network_mode: host
+    environment:
+      - CUDA_VISIBLE_DEVICES=4,5,6,7
+      - NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
+      - NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-1}
+      - NCCL_SHM_DISABLE=${NCCL_SHM_DISABLE:-0}
+      - NCCL_DEBUG=${NCCL_DEBUG:-WARN}
+      - NCCL_CUMEM_ENABLE=${NCCL_CUMEM_ENABLE:-0}
+      - NCCL_CUMEM_HOST_ENABLE=${NCCL_CUMEM_HOST_ENABLE:-0}
+      - VLLM_WORKER_MULTIPROC_METHOD=${VLLM_WORKER_MULTIPROC_METHOD:-spawn}
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
+      - LMCACHE_CONFIG_FILE=/vllm-workspace/lmcache_config.yaml
+    volumes:
+      - ${MODEL_PATH:-/data/temp/yhb/DeepSeek-V4-Flash}:/model:ro
+      - ./lmcache_config.yaml:/vllm-workspace/lmcache_config.yaml:ro
+    ipc: host
+    ulimits:
+      memlock: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['4', '5', '6', '7']
+              capabilities: [gpu]
+    command: >
+      /model
+      --quantization ${MODEL_QUANTIZATION:-awq}
+      --dtype ${MODEL_DTYPE:-float16}
+      --tensor-parallel-size 4
+      --disable-custom-all-reduce
+      --trust-remote-code
+      --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION:-0.80}
+      --max-model-len ${MAX_MODEL_LEN:-32768}
+      --max-num-seqs ${DECODE_MAX_NUM_SEQS:-32}
+      --max-num-batched-tokens ${DECODE_MAX_NUM_BATCHED_TOKENS:-8192}
+      --scheduler-delay-factor ${DECODE_SCHEDULER_DELAY_FACTOR:-0.0}
+      --enable-prefix-caching
+      --api-key ${VLLM_API_KEY:-sk-mvp-change-me}
+      --kv-transfer-config '{"kv_connector":"LMCacheMPConnector","kv_connector_module_path":"lmcache.integration.vllm.lmcache_mp_connector","kv_role":"kv_consumer","kv_connector_extra_config":{"lmcache.mp.port":${LMCACHE_MP_PORT:-6555}}}'
+      --host 127.0.0.1
+      --port 8002
+    depends_on:
+      lmcache-server:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health', timeout=5).read()"
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 300s
+    stop_grace_period: 120s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"

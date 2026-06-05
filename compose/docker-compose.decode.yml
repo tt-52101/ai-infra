@@ -1,11 +1,11 @@
 services:
   # Decode 节点：绑定宿主机 GPU 4-7，负责高并发流式输出和 KV Cache 消费
   vllm-decode:
-    image: ${VLLM_IMAGE:-lmcache/vllm-openai:latest}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
     container_name: vllm-decode-cluster
     network_mode: host
     environment:
-      - CUDA_VISIBLE_DEVICES=0,1,2,3
+      - CUDA_VISIBLE_DEVICES=4,5,6,7
       - NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
       - NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-1}
       - NCCL_SHM_DISABLE=${NCCL_SHM_DISABLE:-0}
@@ -16,7 +16,7 @@ services:
       - OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
       - LMCACHE_CONFIG_FILE=/vllm-workspace/lmcache_config.yaml
     volumes:
-      - ${MODEL_PATH:-/data/temp/yhb/DeepSeek-V4-Flash}:/model:ro
+      - ${MODEL_PATH:-/data/temp/yhb/Qwen3.5-35B-A3B}:/model:ro
       - ./lmcache_config.yaml:/vllm-workspace/lmcache_config.yaml:ro
     ipc: host
     ulimits:
